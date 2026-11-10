@@ -181,6 +181,55 @@ function botReactMs(p) {
   return kind.reactMs + diff.reactAdd;
 }
 
+// Bot targeting: identity-blind victim rotation + commitment.
+// AVOID_MS > STICKY_MS so a bot always serves one full commitment to
+// someone else before its last victim becomes eligible again.
+const AVOID_MS = 4000;
+const STICKY_MS = 2000;
+const SWITCH_MARGIN = 0.25;
+
+function scoreTarget(p, q) {
+  const d = Math.hypot(q.x - p.x, q.y - p.y);
+  // slight preference for closer + slower targets
+  return d - (Math.hypot(q.vx || 0, q.vy || 0) * 0.1);
+}
+
+// Pick which player an IT bot chases. Pure (no randomness): callers apply
+// the per-difficulty mistake roll on top. Returns the player or null.
+function selectBotTarget(p, players, now) {
+  const others = players.filter((q) => q !== p && !q.frozen && !q.spectate);
+  if (others.length === 0) return null;
+  let pool = others;
+  if (p.avoidId && now < (p.avoidUntil || 0)) {
+    const rest = others.filter((q) => q.id !== p.avoidId);
+    if (rest.length > 0) pool = rest;
+  }
+  const bestOf = (list) => {
+    let best = null,
+      bd = Infinity;
+    for (const q of list) {
+      const s = scoreTarget(p, q);
+      if (s < bd) {
+        bd = s;
+        best = q;
+      }
+    }
+    return best;
+  };
+  // Commitment with hysteresis: keep the current target unless another
+  // candidate is clearly better, so chases hold instead of flip-flopping.
+  if (p.chaseId && now < (p.chaseUntil || 0)) {
+    const cur = pool.find((q) => q.id === p.chaseId);
+    if (cur) {
+      const best = bestOf(pool);
+      const curScore = scoreTarget(p, cur);
+      if (!best || best.id === cur.id || !(scoreTarget(p, best) < curScore * (1 - SWITCH_MARGIN))) return cur;
+      return best;
+    }
+  }
+  return bestOf(pool);
+}
+
 const DASH_TIME_MS = 160;
 const DASH_GRACE_MS = 200;
 const HUMAN_DASH_MULT = 3.1;
@@ -272,6 +321,10 @@ function makeBotPlayer(lobby, botsCount, difficulty) {
     thinkAt: 0,
     tx: pos.x,
     ty: pos.y,
+    chaseId: null,
+    chaseUntil: 0,
+    avoidId: null,
+    avoidUntil: 0,
     stuckMs: 0,
     lastCheckX: pos.x,
     lastCheckY: pos.y,
@@ -388,28 +441,23 @@ function thinkBot(p, lobby, now) {
   }
 
   if (p.it) {
-    // prefer humans so bots do not just train on each other
+    // identity-blind targeting: victim rotation + commitment, no human/bot distinction
     const others = all.filter((q) => q !== p && !q.frozen && !q.spectate);
-    const humans = others.filter((q) => !q.bot);
-    const pool = humans.length > 0 ? humans : others;
-    let best = null,
-      bd = 1e9;
-    for (const q of pool) {
-      const d = Math.hypot(q.x - p.x, q.y - p.y);
-      // slight preference for closer + slower targets
-      const score = d - (Math.hypot(q.vx || 0, q.vy || 0) * 0.1);
-      if (score < bd) {
-        bd = score;
-        best = q;
-      }
-    }
+    const best = selectBotTarget(p, all, now);
     if (!best) return;
-    // mistake: occasionally chase a random target instead of the best one
-    if (pool.length > 1 && Math.random() < (diff.mistake || 0)) {
-      best = pool[Math.floor(Math.random() * pool.length)];
+    if (best.id !== p.chaseId) {
+      p.chaseId = best.id;
+      p.chaseUntil = now + STICKY_MS;
     }
-    let px = best.x + (best.vx || 0) * kind.predict * diff.predictMult;
-    let py = best.y + (best.vy || 0) * kind.predict * diff.predictMult;
+    // mistake: occasionally commit to a random target instead (per difficulty)
+    let target = best;
+    if (others.length > 1 && Math.random() < (diff.mistake || 0)) {
+      target = others[Math.floor(Math.random() * others.length)];
+      p.chaseId = target.id;
+      p.chaseUntil = now + STICKY_MS;
+    }
+    let px = target.x + (target.vx || 0) * kind.predict * diff.predictMult;
+    let py = target.y + (target.vy || 0) * kind.predict * diff.predictMult;
     // cut off: if target hugs wall, aim a bit toward center to intercept
     const nearWall = px < 90 || px > w - 90 || py < 90 || py > h - 90;
     if (nearWall) {
@@ -423,7 +471,7 @@ function thinkBot(p, lobby, now) {
     p.tx = px;
     p.ty = py;
     // chase dash: close the gap when in range (range + cooldown differ by difficulty)
-    const chaseD = Math.hypot(best.x - p.x, best.y - p.y);
+    const chaseD = Math.hypot(target.x - p.x, target.y - p.y);
     if (chaseD >= (diff.dashChaseMin ?? 120) && chaseD <= (diff.dashChaseMax ?? 280)) {
       const dx = px - p.x;
       const dy = py - p.y;
@@ -612,6 +660,10 @@ function resetForStart(lobby) {
       p.frozenUntil = 0;
       p.jukeUntil = 0;
       p.waypointUntil = 0;
+      p.chaseId = null;
+      p.chaseUntil = 0;
+      p.avoidId = null;
+      p.avoidUntil = 0;
     }
   }
   const eligible = [...lobby.players.values()].filter((p) => !p.spectate && !p.bot);
@@ -741,6 +793,11 @@ const tickTimer = setInterval(() => {
             q.thinkAt = now + botReactMs(q) + Math.random() * 60;
             q.mdx = q.lastDx || 1;
             q.mdy = q.lastDy || 0;
+            // victim rotation: don't chase the same player twice in a row
+            q.avoidId = itPlayer.id;
+            q.avoidUntil = now + AVOID_MS;
+            q.chaseId = null;
+            q.chaseUntil = 0;
           }
           lobby.tagCooldownUntil = now + lobby.settings.cooldownMs;
           if (lobby.settings.tagsToWin > 0 && itPlayer.tags >= lobby.settings.tagsToWin) {
@@ -1287,6 +1344,9 @@ module.exports = {
   cleanSettings,
   cleanDifficulty,
   publicPlayers,
+  selectBotTarget,
+  thinkBot,
+  makeBotPlayer,
   isTagTouch,
   classicTagTarget,
   classicTimeWinner,
@@ -1295,4 +1355,7 @@ module.exports = {
   DEFAULT_SETTINGS,
   CLASSIC_DURATION_MS,
   FREEZE_DURATION_MS,
+  AVOID_MS,
+  STICKY_MS,
+  SWITCH_MARGIN,
 };

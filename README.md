@@ -35,6 +35,8 @@ All bots dash too: Easy only bursts away at very close range, Medium chases and 
 
 All bots steer with difficulty turn rates (easy turns slowly, hard snaps faster) and rethink on their difficulty clock: easy about 380-460ms, medium about 230-310ms, hard about 140-220ms. Easy bots also chase the wrong target 15% of the time. A bot that just became IT waits out its own reaction delay before chasing, instead of reacting instantly.
 
+IT bots are identity-blind: they chase whoever is nearest, never the same player twice in a row (4s rotation), and commit to a target for about 2s before reconsidering (switching early only for a clearly better opportunity).
+
 Leader manages bots with Add bot (pick Easy, Medium, or Hard, max 3, counts toward max players) and Remove per bot in the player list, in waiting and during play.
 
 ## Controls
