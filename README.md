@@ -72,3 +72,8 @@ Listens on `process.env.PORT || 3000`. Needs a long-lived socket server.
 - Do not use Vercel, Netlify, or GitHub Pages for the server: they cannot hold a WebSocket open.
 
 Ship checklist: public repo link, live demo link that stays up, README with the 2-tab test (create, copy invite into a new tab, both ready up, start), a screenshot of two windows side by side, and a note of the lobby settings used.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
+

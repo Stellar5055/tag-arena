@@ -3,6 +3,11 @@
   "version": "1.0.0",
   "description": "2-key Tag Arena - tiny authoritative multiplayer tag game (Crescent multiplayer card)",
   "main": "server.js",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Stellar5055/tag-arena.git"
+  },
   "scripts": {
     "start": "node server.js"
   },
