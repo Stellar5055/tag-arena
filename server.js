@@ -19,6 +19,8 @@ const DEFAULT_SETTINGS = {
   speed: 260,
   arena: "classic",
   allowBots: true,
+  dashCdMs: 3000,
+  gameMode: "classic",
 };
 
 // code -> { code, leaderId, state, settings, players: Map<id,player>, sockets: Map<id,ws>, tagCooldownUntil, winnerId }
@@ -34,9 +36,10 @@ function makeCode() {
   return Math.random().toString(36).slice(2, 6).toUpperCase();
 }
 
-function cleanName(n) {
-  const s = String(n || "Player").slice(0, 16).trim();
-  return s || "Player";
+function cleanName(n, isBot) {
+  let s = String(n || "Player").slice(0, 16).trim() || "Player";
+  if (!isBot && BOT_NAME_RE.test(s)) s = "Player";
+  return s;
 }
 
 function cleanLook(look, takenColors) {
@@ -63,6 +66,9 @@ function cleanSettings(s) {
   v.speed = [200, 260, 320].includes(parseInt(v.speed, 10)) ? parseInt(v.speed, 10) : 260;
   if (!ARENAS[v.arena]) v.arena = "classic";
   v.allowBots = v.allowBots !== false;
+  const dcd = parseInt(v.dashCdMs, 10);
+  v.dashCdMs = dcd === 0 ? 0 : dcd === 5000 ? 5000 : 3000;
+  v.gameMode = v.gameMode === "freeze" ? "freeze" : "classic";
   return v;
 }
 
@@ -84,8 +90,8 @@ function sendError(ws, msg) {
 
 function publicPlayers(lobby) {
   const now = Date.now();
+  const dashOff = lobby.settings.dashCdMs === 0;
   return [...lobby.players.values()].map((p) => {
-    const diff = p.bot ? BOT_DIFFS[p.difficulty] || BOT_DIFFS.hard : null;
     return {
       id: p.id,
       name: p.name,
@@ -100,10 +106,21 @@ function publicPlayers(lobby) {
       difficulty: p.bot ? p.difficulty || "hard" : undefined,
       tags: p.tags || 0,
       dashing: now < (p.dashUntil || 0),
-      dashMsLeft: Math.max(0, (p.dashCdUntil || 0) - now),
-      dashCdTotal: p.bot ? diff.dashCdMs || 3000 : HUMAN_DASH_CD_MS,
+      dashCharges: dashOff ? 0 : p.dashCharges ?? DASH_MAX_CHARGES,
+      dashMax: DASH_MAX_CHARGES,
+      dashMsLeft: dashOff ? 0 : p.dashCharges > 0 ? 0 : Math.max(0, (p.dashNextAt || 0) - now),
+      dashCdTotal: dashOff ? 0 : dashRegenMs(lobby, p),
+      frozen: !!p.frozen,
+      spectate: !!p.spectate,
+      ready: !!p.ready,
+      idle: !p.bot && !p.spectate && now - (p.lastActiveAt || now) > IDLE_AFTER_MS,
     };
   });
+}
+
+function lobbyTimeLeft(lobby) {
+  if (lobby.settings.gameMode !== "freeze" || lobby.state !== "playing" || !lobby.endsAt) return null;
+  return Math.max(0, lobby.endsAt - Date.now());
 }
 
 function broadcastLobby(lobby) {
@@ -115,6 +132,7 @@ function broadcastLobby(lobby) {
     settings: lobby.settings,
     players: publicPlayers(lobby),
     winnerId: lobby.winnerId || null,
+    winTeam: lobby.winTeam || null,
   };
   for (const ws of lobby.sockets.values()) send(ws, msg);
 }
@@ -125,10 +143,12 @@ function broadcastState(lobby) {
     code: lobby.code,
     leaderId: lobby.leaderId,
     state: lobby.state,
-    settings: { tagsToWin: lobby.settings.tagsToWin, arena: lobby.settings.arena },
+    settings: { tagsToWin: lobby.settings.tagsToWin, arena: lobby.settings.arena, gameMode: lobby.settings.gameMode, dashCdMs: lobby.settings.dashCdMs },
     arena: arenaSize(lobby),
     players: publicPlayers(lobby),
     winnerId: lobby.winnerId || null,
+    winTeam: lobby.winTeam || null,
+    timeLeft: lobbyTimeLeft(lobby),
   };
   for (const ws of lobby.sockets.values()) send(ws, msg);
 }
@@ -143,9 +163,9 @@ const BOT_ORDER = ["chaser", "runner", "trickster"];
 // easy < medium < hard (hard is the current behavior)
 // react = kind.reactMs + diff.reactAdd ; turn = how fast bots steer toward a new heading
 const BOT_DIFFS = {
-  easy: { chase: 0.7, flee: 0.7, reactAdd: 240, predictMult: 0, wanderMult: 2.2, boostMult: 1.0, frozenMs: 650, juke: false, dashMult: 2.2, dashCdMs: 5200, dashChaseMin: 1e9, dashChaseMax: -1, dashFleeRange: 110, turnLerp: 0.12 },
-  medium: { chase: 0.87, flee: 0.87, reactAdd: 90, predictMult: 0.5, wanderMult: 1.4, boostMult: 1.08, frozenMs: 400, juke: false, dashMult: 2.8, dashCdMs: 4000, dashChaseMin: 150, dashChaseMax: 250, dashFleeRange: 140, turnLerp: 0.22 },
-  hard: { chase: 1.0, flee: 1.0, reactAdd: 0, predictMult: 1.0, wanderMult: 1.0, boostMult: 1.18, frozenMs: 350, juke: true, dashMult: 3.1, dashCdMs: 3000, dashChaseMin: 120, dashChaseMax: 280, dashFleeRange: 165, turnLerp: 0.38 },
+  easy: { chase: 0.7, flee: 0.7, reactAdd: 240, predictMult: 0, wanderMult: 2.2, boostMult: 1.0, frozenMs: 650, juke: false, dashMult: 2.2, dashCdMs: 5200, dashChaseMin: 1e9, dashChaseMax: -1, dashFleeRange: 110, turnLerp: 0.12, mistake: 0.15 },
+  medium: { chase: 0.87, flee: 0.87, reactAdd: 90, predictMult: 0.5, wanderMult: 1.4, boostMult: 1.08, frozenMs: 400, juke: false, dashMult: 2.8, dashCdMs: 4000, dashChaseMin: 150, dashChaseMax: 250, dashFleeRange: 140, turnLerp: 0.22, mistake: 0.06 },
+  hard: { chase: 1.0, flee: 1.0, reactAdd: 0, predictMult: 1.0, wanderMult: 1.0, boostMult: 1.18, frozenMs: 350, juke: true, dashMult: 3.1, dashCdMs: 3000, dashChaseMin: 120, dashChaseMax: 280, dashFleeRange: 165, turnLerp: 0.38, mistake: 0.01 },
 };
 
 function botReactMs(p) {
@@ -155,8 +175,14 @@ function botReactMs(p) {
 }
 
 const DASH_TIME_MS = 160;
+const DASH_GRACE_MS = 200;
 const HUMAN_DASH_MULT = 3.1;
-const HUMAN_DASH_CD_MS = 3000;
+const DASH_MAX_CHARGES = 2;
+const DASH_REGEN_MS = 4000;
+const FREEZE_DURATION_MS = 120000;
+const IDLE_AFTER_MS = 15000;
+const LOBBY_TTL_MS = 3 * 60 * 60 * 1000;
+const BOT_NAME_RE = /^bot[\s\d]/i;
 
 function cleanDifficulty(d) {
   const s = String(d || "hard").toLowerCase();
@@ -206,18 +232,35 @@ function makeBotPlayer(lobby, botsCount, difficulty) {
     waypointX: 0,
     waypointY: 0,
     dashUntil: 0,
-    dashCdUntil: 0,
+    dashCharges: DASH_MAX_CHARGES,
+    dashNextAt: 0,
     dashDx: 0,
     dashDy: 0,
+    dashGraceUntil: 0,
     lastDx: 1,
     lastDy: 0,
     mdx: 1,
     mdy: 0,
+    frozen: false,
+    spectate: false,
+    ready: false,
+    lastActiveAt: Date.now(),
   };
 }
 
-function tryDash(p, dirX, dirY, now, cdMs) {
-  if (now < (p.dashCdUntil || 0) || now < (p.dashUntil || 0)) return false;
+function dashRegenMs(lobby, p) {
+  if (lobby.settings.dashCdMs === 0) return Infinity;
+  if (p.bot) {
+    const diff = BOT_DIFFS[p.difficulty] || BOT_DIFFS.hard;
+    return Math.max(diff.dashCdMs || 3000, lobby.settings.dashCdMs);
+  }
+  return lobby.settings.dashCdMs;
+}
+
+function tryDash(lobby, p, dirX, dirY, now) {
+  if (lobby.settings.dashCdMs === 0) return false;
+  if ((p.dashCharges ?? DASH_MAX_CHARGES) <= 0) return false;
+  if (now < (p.dashUntil || 0)) return false;
   const len = Math.hypot(dirX, dirY);
   if (!(len > 0.01)) return false;
   p.dashDx = dirX / len;
@@ -225,8 +268,21 @@ function tryDash(p, dirX, dirY, now, cdMs) {
   p.lastDx = p.dashDx;
   p.lastDy = p.dashDy;
   p.dashUntil = now + DASH_TIME_MS;
-  p.dashCdUntil = now + cdMs;
+  p.dashGraceUntil = p.dashUntil + DASH_GRACE_MS;
+  p.dashCharges = (p.dashCharges ?? DASH_MAX_CHARGES) - 1;
+  if (p.dashCharges < DASH_MAX_CHARGES) {
+    p.dashNextAt = now + dashRegenMs(lobby, p);
+  }
   return true;
+}
+
+function regenDash(lobby, p, now) {
+  if (lobby.settings.dashCdMs === 0) return;
+  if ((p.dashCharges ?? DASH_MAX_CHARGES) >= DASH_MAX_CHARGES) return;
+  if (now >= (p.dashNextAt || 0)) {
+    p.dashCharges = (p.dashCharges ?? 0) + 1;
+    p.dashNextAt = p.dashCharges >= DASH_MAX_CHARGES ? 0 : now + dashRegenMs(lobby, p);
+  }
 }
 
 function estimateVelocities(lobby, dt) {
@@ -280,7 +336,7 @@ function thinkBot(p, lobby, now) {
 
   if (p.it) {
     // prefer humans so bots do not just train on each other
-    const others = all.filter((q) => q !== p);
+    const others = all.filter((q) => q !== p && !q.frozen && !q.spectate);
     const humans = others.filter((q) => !q.bot);
     const pool = humans.length > 0 ? humans : others;
     let best = null,
@@ -295,6 +351,10 @@ function thinkBot(p, lobby, now) {
       }
     }
     if (!best) return;
+    // mistake: occasionally chase a random target instead of the best one
+    if (pool.length > 1 && Math.random() < (diff.mistake || 0)) {
+      best = pool[Math.floor(Math.random() * pool.length)];
+    }
     let px = best.x + (best.vx || 0) * kind.predict * diff.predictMult;
     let py = best.y + (best.vy || 0) * kind.predict * diff.predictMult;
     // cut off: if target hugs wall, aim a bit toward center to intercept
@@ -318,7 +378,7 @@ function thinkBot(p, lobby, now) {
       const hx = p.tx - p.x;
       const hy = p.ty - p.y;
       if (Math.hypot(hx, hy) > 1) {
-        tryDash(p, dx, dy, now, diff.dashCdMs || 3000);
+        tryDash(lobby, p, dx, dy, now);
       }
     }
   } else if (it) {
@@ -374,7 +434,7 @@ function thinkBot(p, lobby, now) {
     p.ty = p.y + (dirY / len) * reach;
     // flee dash: burst away when IT gets close (range + cooldown differ by difficulty)
     if (d <= (diff.dashFleeRange || 165)) {
-      tryDash(p, dirX, dirY, now, diff.dashCdMs || 3000);
+      tryDash(lobby, p, dirX, dirY, now);
     }
   }
 }
@@ -445,21 +505,25 @@ function removePlayer(lobby, playerId) {
   lobby.players.delete(playerId);
   lobby.sockets.delete(playerId);
   if (lobby.leaderId === playerId) migrateLeader(lobby);
-  if ([...lobby.players.values()].filter((p) => !p.bot).length === 0) {
+  const humans = [...lobby.players.values()].filter((p) => !p.bot);
+  if (humans.length === 0) {
     lobbies.delete(lobby.code);
     return;
   }
-  const list = [...lobby.players.values()];
-  if (!list.some((p) => p.it) && list.length > 0) {
-    list[Math.floor(Math.random() * list.length)].it = true;
+  const eligible = [...lobby.players.values()].filter((p) => !p.spectate && !p.frozen);
+  if (!eligible.some((p) => p.it) && eligible.length > 0) {
+    eligible[Math.floor(Math.random() * eligible.length)].it = true;
   }
 }
 
 function resetForStart(lobby) {
   lobby.winnerId = null;
+  lobby.winTeam = null;
   lobby.tagCooldownUntil = Date.now() + 1500;
+  lobby.endsAt = lobby.settings.gameMode === "freeze" ? Date.now() + FREEZE_DURATION_MS : 0;
   const now = Date.now();
   for (const p of lobby.players.values()) {
+    if (p.spectate) continue;
     const pos = spawnPos(lobby);
     p.x = pos.x;
     p.y = pos.y;
@@ -472,11 +536,15 @@ function resetForStart(lobby) {
     p.keys = {};
     p.moveVec = null;
     p.dashUntil = 0;
-    p.dashCdUntil = 0;
+    p.dashCharges = DASH_MAX_CHARGES;
+    p.dashNextAt = 0;
     p.dashDx = 0;
     p.dashDy = 0;
+    p.dashGraceUntil = 0;
     p.lastDx = 1;
     p.lastDy = 0;
+    p.frozen = false;
+    p.ready = false;
     if (p.bot) {
       p.thinkAt = now + botReactMs(p) + Math.random() * 150;
       p.tx = pos.x;
@@ -493,8 +561,9 @@ function resetForStart(lobby) {
       p.waypointUntil = 0;
     }
   }
-  const list = [...lobby.players.values()];
-  if (list.length > 0) list[Math.floor(Math.random() * list.length)].it = true;
+  const eligible = [...lobby.players.values()].filter((p) => !p.spectate && !p.bot);
+  const pool = eligible.length > 0 ? eligible : [...lobby.players.values()].filter((p) => !p.spectate);
+  if (pool.length > 0) pool[Math.floor(Math.random() * pool.length)].it = true;
 }
 
 // --- 30hz authoritative loop, only playing lobbies ---
@@ -502,14 +571,21 @@ setInterval(() => {
   const dt = 1 / 30;
   const now = Date.now();
   for (const lobby of lobbies.values()) {
-    if (lobby.state !== "playing" || lobby.winnerId) {
+    if (lobby.createdAt && now - lobby.createdAt > LOBBY_TTL_MS) {
+      for (const ws of lobby.sockets.values()) send(ws, { t: "error", msg: "Lobby expired after 3 hours." });
+      lobbies.delete(lobby.code);
+      continue;
+    }
+    if (lobby.state !== "playing" || lobby.winnerId || lobby.winTeam) {
       continue;
     }
     const { w, h } = arenaSize(lobby);
     const speed = lobby.settings.speed;
+    const freezeMode = lobby.settings.gameMode === "freeze";
 
     for (const p of lobby.players.values()) {
-      if (p.bot) continue;
+      regenDash(lobby, p, now);
+      if (p.bot || p.spectate || p.frozen) continue;
       if (now < (p.frozenUntil || 0)) continue;
       if (now < (p.dashUntil || 0)) {
         p.x += (p.dashDx || 1) * speed * HUMAN_DASH_MULT * dt;
@@ -544,24 +620,69 @@ setInterval(() => {
 
     const all = [...lobby.players.values()];
     for (const p of all) {
-      if (!p.bot) continue;
+      if (!p.bot || p.spectate || p.frozen) continue;
       thinkBot(p, lobby, now);
       moveBot(p, lobby, dt, now, speed);
     }
 
-    const itPlayer = all.find((p) => p.it);
-    if (itPlayer && now >= lobby.tagCooldownUntil) {
-      for (const q of all) {
-        if (q === itPlayer) continue;
-        if (Math.hypot(q.x - itPlayer.x, q.y - itPlayer.y) < RADIUS * 2) {
-          itPlayer.it = false;
-          itPlayer.tags = (itPlayer.tags || 0) + 1;
-          // anti-cycle: fleer gets a burst, new IT is briefly frozen (duration by new IT difficulty)
-          itPlayer.fleeBoostUntil = now + 1200;
-          if (q.bot) q.fleeBoostUntil = 0;
-          q.it = true;
-          const qDiff = q.bot ? BOT_DIFFS[q.difficulty] || BOT_DIFFS.hard : null;
-          q.frozenUntil = now + (qDiff ? qDiff.frozenMs : 350);
+    if (freezeMode) {
+      const itPlayer = all.find((p) => p.it && !p.spectate);
+      // IT freezes runners, runners unfreeze each other
+      if (itPlayer && !itPlayer.frozen && now >= lobby.tagCooldownUntil) {
+        for (const q of all) {
+          if (q === itPlayer || q.spectate) continue;
+          if (q.frozen || q.it) continue;
+          if (now < (q.dashGraceUntil || 0)) continue;
+          if (Math.hypot(q.x - itPlayer.x, q.y - itPlayer.y) < RADIUS * 2) {
+            q.frozen = true;
+            q.keys = {};
+            q.moveVec = null;
+            itPlayer.tags = (itPlayer.tags || 0) + 1;
+            lobby.tagCooldownUntil = now + lobby.settings.cooldownMs;
+            break;
+          }
+        }
+      }
+      // unfreeze: non-IT, non-frozen touches frozen
+      for (const f of all) {
+        if (!f.frozen || f.spectate || f.it) continue;
+        for (const q of all) {
+          if (q === f || q.spectate || q.frozen || q.it) continue;
+          if (Math.hypot(q.x - f.x, q.y - f.y) < RADIUS * 2) {
+            f.frozen = false;
+            break;
+          }
+        }
+      }
+      const runners = all.filter((p) => !p.it && !p.spectate && !p.bot);
+      const frozenRunners = runners.filter((p) => p.frozen);
+      const humansFrozen = runners.length > 0 && frozenRunners.length === runners.length;
+      const botsAllFrozen = runners.length === 0 && all.filter((p) => !p.it && !p.spectate).every((p) => p.frozen);
+      if ((humansFrozen || botsAllFrozen) && all.some((p) => !p.spectate && !p.it)) {
+        lobby.winTeam = "it";
+        lobby.winnerId = itPlayer ? itPlayer.id : null;
+      } else if (lobby.settings.tagsToWin > 0 && itPlayer && (itPlayer.tags || 0) >= lobby.settings.tagsToWin) {
+        lobby.winTeam = "it";
+        lobby.winnerId = itPlayer.id;
+      } else if (lobby.endsAt && now >= lobby.endsAt) {
+        lobby.winTeam = "runners";
+        lobby.winnerId = "runners";
+      }
+    } else {
+      const itPlayer = all.find((p) => p.it && !p.spectate && !p.frozen);
+      if (itPlayer && now >= lobby.tagCooldownUntil) {
+        for (const q of all) {
+          if (q === itPlayer || q.spectate || q.frozen) continue;
+          if (now < (q.dashGraceUntil || 0)) continue;
+          if (Math.hypot(q.x - itPlayer.x, q.y - itPlayer.y) < RADIUS * 2) {
+            itPlayer.it = false;
+            itPlayer.tags = (itPlayer.tags || 0) + 1;
+            // anti-cycle: fleer gets a burst, new IT is briefly frozen (duration by new IT difficulty)
+            itPlayer.fleeBoostUntil = now + 1200;
+            if (q.bot) q.fleeBoostUntil = 0;
+            q.it = true;
+            const qDiff = q.bot ? BOT_DIFFS[q.difficulty] || BOT_DIFFS.hard : null;
+            q.frozenUntil = now + (qDiff ? qDiff.frozenMs : 350);
           if (q.bot) {
             // new IT does not react instantly: wait out its difficulty delay
             q.thinkAt = now + botReactMs(q) + Math.random() * 60;
@@ -571,10 +692,12 @@ setInterval(() => {
           lobby.tagCooldownUntil = now + lobby.settings.cooldownMs;
           if (lobby.settings.tagsToWin > 0 && itPlayer.tags >= lobby.settings.tagsToWin) {
             lobby.winnerId = itPlayer.id;
+            lobby.winTeam = "it";
           }
           break;
         }
       }
+    }
     }
 
     broadcastState(lobby);
@@ -600,6 +723,8 @@ function leaveCurrent(socket) {
   const lobby = lobbies.get(ctx.code);
   socket.ctx = null;
   if (!lobby) return;
+  // a refreshed tab leaves a stale socket behind: never evict the fresh connection
+  if (ctx.playerId && lobby.sockets.get(ctx.playerId) !== socket) return;
   if (ctx.playerId && lobby.players.has(ctx.playerId) && !lobby.players.get(ctx.playerId).bot) {
     removePlayer(lobby, ctx.playerId);
     if (lobbies.has(lobby.code)) {
@@ -634,13 +759,16 @@ wss.on("connection", (socket) => {
         sockets: new Map(),
         tagCooldownUntil: 0,
         winnerId: null,
+        winTeam: null,
+        endsAt: 0,
+        createdAt: Date.now(),
       };
       const id = String(msg.id || Math.random().toString(36).slice(2)).slice(0, 32);
       const look = cleanLook(msg.look, new Set());
       const pos = { x: 0, y: 0 }; // waiting, no position needed yet
       lobby.players.set(id, {
         id,
-        name: cleanName(msg.name),
+        name: cleanName(msg.name, false),
         color: look.color,
         shape: look.shape,
         trail: look.trail,
@@ -657,11 +785,17 @@ wss.on("connection", (socket) => {
         tags: 0,
         wobble: Math.random() * 10,
         dashUntil: 0,
-        dashCdUntil: 0,
+        dashCharges: DASH_MAX_CHARGES,
+        dashNextAt: 0,
         dashDx: 0,
         dashDy: 0,
+        dashGraceUntil: 0,
         lastDx: 1,
         lastDy: 0,
+        frozen: false,
+        spectate: false,
+        ready: true,
+        lastActiveAt: Date.now(),
       });
       lobby.leaderId = id;
       lobby.sockets.set(id, socket);
@@ -675,37 +809,93 @@ wss.on("connection", (socket) => {
         sendError(socket, "Lobby not found. Check the code.");
         return;
       }
-      if (lobby.state !== "waiting") {
-        if (lobby.winnerId) {
-          sendError(socket, "Game just finished. Ask the leader to press End or Play again, then join.");
-        } else {
-          sendError(socket, "Game already started. Wait for it to end.");
-        }
-        return;
-      }
       const id = String(msg.id || Math.random().toString(36).slice(2)).slice(0, 32);
       const isReconnect = lobby.players.has(id);
-      if (!isReconnect && lobby.players.size >= lobby.settings.maxPlayers) {
+      // mid-game joins become spectators and auto-join next round
+      if (lobby.state !== "waiting" && !lobby.winnerId && !lobby.winTeam) {
+        if (isReconnect) {
+          const p = lobby.players.get(id);
+          lobby.sockets.set(id, socket);
+          socket.ctx = { code, playerId: id };
+          if (lobby.state === "playing") broadcastState(lobby);
+          else broadcastLobby(lobby);
+          return;
+        }
+        const specs = [...lobby.players.values()].filter((p) => p.spectate).length;
+        if (specs >= 4) {
+          sendError(socket, "Game in progress and spectator seats are full.");
+          return;
+        }
+        leaveCurrent(socket);
+        const taken = new Set([...lobby.players.values()].map((p) => p.color));
+        const look = cleanLook(msg.look, taken);
+        lobby.players.set(id, {
+          id,
+          name: cleanName(msg.name, false),
+          color: look.color,
+          shape: look.shape,
+          trail: look.trail,
+          x: -100,
+          y: -100,
+          vx: 0,
+          vy: 0,
+          lastX: -100,
+          lastY: -100,
+          keys: {},
+          moveVec: null,
+          it: false,
+          bot: false,
+          tags: 0,
+          wobble: Math.random() * 10,
+          dashUntil: 0,
+          dashCharges: DASH_MAX_CHARGES,
+          dashNextAt: 0,
+          dashDx: 0,
+          dashDy: 0,
+          dashGraceUntil: 0,
+          lastDx: 1,
+          lastDy: 0,
+          frozen: false,
+          spectate: true,
+          ready: false,
+          lastActiveAt: Date.now(),
+        });
+        lobby.sockets.set(id, socket);
+        socket.ctx = { code, playerId: id };
+        if (lobby.state === "playing") broadcastState(lobby);
+        else broadcastLobby(lobby);
+        return;
+      }
+      if (lobby.winnerId || lobby.winTeam) {
+        sendError(socket, "Game just finished. Ask the leader to press End or Play again, then join.");
+        return;
+      }
+      const seated = [...lobby.players.values()].filter((p) => !p.spectate).length;
+      if (!isReconnect && seated >= lobby.settings.maxPlayers) {
         sendError(socket, "Lobby is full.");
         return;
       }
-      leaveCurrent(socket);
-      const taken = new Set([...lobby.players.values()].filter((p) => p.id !== id).map((p) => p.color));
-      const look = cleanLook(msg.look, taken);
+      // rejoining the same seat must not delete it first (leaveCurrent would)
+      if (!(isReconnect && ctx.code === code && ctx.playerId === id)) leaveCurrent(socket);
+      const taken2 = new Set([...lobby.players.values()].filter((p) => p.id !== id).map((p) => p.color));
+      const look2 = cleanLook(msg.look, taken2);
       if (isReconnect) {
         const p = lobby.players.get(id);
-        p.name = cleanName(msg.name);
-        p.color = look.color;
-        p.shape = look.shape;
-        p.trail = look.trail;
+        p.name = cleanName(msg.name, false);
+        p.color = look2.color;
+        p.shape = look2.shape;
+        p.trail = look2.trail;
+        p.spectate = false;
+        p.ready = false;
+        p.lastActiveAt = Date.now();
         lobby.sockets.set(id, socket);
       } else {
         lobby.players.set(id, {
           id,
-          name: cleanName(msg.name),
-          color: look.color,
-          shape: look.shape,
-          trail: look.trail,
+          name: cleanName(msg.name, false),
+          color: look2.color,
+          shape: look2.shape,
+          trail: look2.trail,
           x: 0,
           y: 0,
           vx: 0,
@@ -719,11 +909,17 @@ wss.on("connection", (socket) => {
           tags: 0,
           wobble: Math.random() * 10,
           dashUntil: 0,
-          dashCdUntil: 0,
+          dashCharges: DASH_MAX_CHARGES,
+          dashNextAt: 0,
           dashDx: 0,
           dashDy: 0,
+          dashGraceUntil: 0,
           lastDx: 1,
           lastDy: 0,
+          frozen: false,
+          spectate: false,
+          ready: false,
+          lastActiveAt: Date.now(),
         });
         lobby.sockets.set(id, socket);
       }
@@ -738,7 +934,7 @@ wss.on("connection", (socket) => {
       if (!p) return;
       const taken = new Set([...lobby.players.values()].filter((q) => q.id !== p.id).map((q) => q.color));
       const look = cleanLook(msg.look, taken);
-      p.name = cleanName(msg.name !== undefined ? msg.name : p.name);
+      p.name = cleanName(msg.name !== undefined ? msg.name : p.name, false);
       p.color = look.color;
       p.shape = look.shape;
       p.trail = look.trail;
@@ -756,7 +952,8 @@ wss.on("connection", (socket) => {
         return;
       }
       const next = cleanSettings(Object.assign({}, lobby.settings, msg.settings));
-      if (lobby.players.size > next.maxPlayers) {
+      const seated = [...lobby.players.values()].filter((p) => !p.spectate).length;
+      if (seated > next.maxPlayers) {
         sendError(socket, "Lobby has more players than the new max.");
         return;
       }
@@ -770,15 +967,32 @@ wss.on("connection", (socket) => {
         sendError(socket, "Only the leader can start.");
         return;
       }
-      const isRestart = lobby.state === "playing" && lobby.winnerId;
+      const isRestart = lobby.state === "playing" && (lobby.winnerId || lobby.winTeam);
       if (lobby.state !== "waiting" && !isRestart) return;
-      if (lobby.players.size < 2) {
+      const seated = [...lobby.players.values()].filter((p) => !p.spectate);
+      if (seated.length < 2) {
         sendError(socket, "Need at least 2 players or add a bot.");
         return;
+      }
+      if (lobby.state === "waiting") {
+        const notReady = seated.filter((p) => !p.bot && p.id !== lobby.leaderId && !p.ready);
+        if (notReady.length > 0) {
+          sendError(socket, "Waiting for " + notReady.map((p) => p.name).slice(0, 3).join(", ") + " to ready up.");
+          return;
+        }
       }
       lobby.state = "playing";
       resetForStart(lobby);
       broadcastState(lobby);
+    } else if (msg.t === "toggleReady") {
+      if (!ctx.code) return;
+      const lobby = lobbies.get(ctx.code);
+      if (!lobby || lobby.state !== "waiting") return;
+      const p = lobby.players.get(ctx.playerId);
+      if (!p || p.bot || p.spectate) return;
+      p.ready = !p.ready;
+      p.lastActiveAt = Date.now();
+      broadcastLobby(lobby);
     } else if (msg.t === "endGame") {
       if (!ctx.code) return;
       const lobby = lobbies.get(ctx.code);
@@ -789,12 +1003,29 @@ wss.on("connection", (socket) => {
       }
       lobby.state = "waiting";
       lobby.winnerId = null;
+      lobby.winTeam = null;
+      lobby.endsAt = 0;
       for (const p of lobby.players.values()) {
         p.tags = 0;
         p.it = false;
         p.keys = {};
         p.moveVec = null;
+        p.frozen = false;
+        p.dashUntil = 0;
+        p.dashCharges = DASH_MAX_CHARGES;
+        p.dashNextAt = 0;
+        p.dashGraceUntil = 0;
+        if (p.spectate) {
+          p.spectate = false;
+          p.ready = false;
+          const pos = spawnPos(lobby);
+          p.x = pos.x;
+          p.y = pos.y;
+        } else {
+          p.ready = p.bot ? false : p.id === lobby.leaderId;
+        }
       }
+      migrateLeader(lobby);
       broadcastLobby(lobby);
     } else if (msg.t === "kick") {
       if (!ctx.code) return;
@@ -824,7 +1055,8 @@ wss.on("connection", (socket) => {
         sendError(socket, "Bots are turned off in settings.");
         return;
       }
-      if (lobby.players.size >= lobby.settings.maxPlayers) {
+      const seated = [...lobby.players.values()].filter((p) => !p.spectate).length;
+      if (seated >= lobby.settings.maxPlayers) {
         sendError(socket, "Lobby is full.");
         return;
       }
@@ -867,11 +1099,12 @@ wss.on("connection", (socket) => {
     } else if (msg.t === "input") {
       if (!ctx.code) return;
       const lobby = lobbies.get(ctx.code);
-      if (!lobby || lobby.state !== "playing" || lobby.winnerId) return;
+      if (!lobby || lobby.state !== "playing" || lobby.winnerId || lobby.winTeam) return;
       const p = lobby.players.get(ctx.playerId);
-      if (!p || p.bot) return;
+      if (!p || p.bot || p.spectate || p.frozen) return;
       const now = Date.now();
       if (now < (p.frozenUntil || 0)) return;
+      p.lastActiveAt = now;
       p.keys = {
         up: !!msg.keys?.up,
         down: !!msg.keys?.down,
@@ -899,7 +1132,7 @@ wss.on("connection", (socket) => {
           dx = p.lastDx || 1;
           dy = p.lastDy || 0;
         }
-        tryDash(p, dx, dy, now, HUMAN_DASH_CD_MS);
+        tryDash(lobby, p, dx, dy, now);
       }
     }
   });
