@@ -627,6 +627,7 @@ function renderGame(){
     }
     const btn = $("dashBtn");
     if (btn) btn.disabled = charges <= 0 || !!game.winnerId || !!game.winTeam || (me && me.spectate);
+    }
   } else {
     $("dashHud").textContent = me && me.spectate ? "spectating" : "";
     $("dashBar").style.width = "0%";
