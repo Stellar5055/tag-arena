@@ -1,0 +1,604 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tag Arena</title>
+<style>
+  :root {
+    --paper: #f2efe9;
+    --panel: #fffdf7;
+    --ink: #191510;
+    --muted: #6f6a5e;
+    --line: #191510;
+    --accent: #c92a1e;
+    --accent-soft: #fbe9e5;
+    --arena: #131109;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: "Iowan Old Style", Georgia, Palatino, "Times New Roman", serif;
+    font-size: 15px; line-height: 1.45;
+  }
+  .topbar { border-bottom: 2px solid var(--line); background: var(--panel); }
+  .topbar-inner { max-width: 1080px; margin: 0 auto; padding: 12px 18px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .mark { width: 30px; height: 30px; background: var(--ink); color: var(--paper); display: grid; place-items: center; font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 700; font-size: 16px; }
+  .brand h1 { font-size: 19px; margin: 0; }
+  .brand small { display: block; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
+  .conn { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; border: 1.5px solid var(--line); padding: 5px 10px; border-radius: 999px; background: #fff; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #b0afa5; }
+  .dot.on { background: #2f9e44; } .dot.off { background: var(--accent); }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 18px; }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+  @media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
+
+  .card { background: var(--panel); border: 2px solid var(--line); }
+  .card h2 { margin: 0; padding: 8px 12px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; border-bottom: 2px solid var(--line); background: #efe9dc; }
+  .card .body { padding: 12px; }
+  label.small { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); display: block; margin: 10px 0 6px; }
+  label.small:first-child { margin-top: 0; }
+  input[type="text"] { width: 100%; font: inherit; padding: 7px 9px; border: 1.5px solid var(--line); background: #fff; border-radius: 0; }
+  input.code { font-family: ui-monospace, Menlo, Consolas, monospace; text-transform: uppercase; letter-spacing: 0.2em; text-align: center; font-size: 18px; }
+  select { font: inherit; padding: 6px 8px; border: 1.5px solid var(--line); background: #fff; width: 100%; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  button { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; border: 1.5px solid var(--line); background: #fff; color: var(--ink); padding: 8px 11px; cursor: pointer; border-radius: 0; }
+  button:hover { background: #eee8d9; }
+  button.primary { background: var(--ink); color: var(--paper); }
+  button.primary:hover { background: #000; }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn-stack { display: grid; gap: 8px; margin-top: 10px; }
+  .btn-row { display: flex; gap: 8px; } .btn-row button { flex: 1; }
+
+  .swatches { display: flex; gap: 8px; flex-wrap: wrap; }
+  .sw { width: 28px; height: 28px; border: 2px solid var(--line); cursor: pointer; padding: 0; }
+  .sw.sel { outline: 2px solid var(--ink); outline-offset: 2px; }
+  .opt-row { display: flex; gap: 8px; }
+  .opt-row button { flex: 1; }
+  .opt-row button.sel { background: var(--ink); color: var(--paper); }
+
+  .code-big { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 42px; letter-spacing: 0.18em; text-align: center; margin: 6px 0; }
+  #players, #wplayers { list-style: none; margin: 0; padding: 0; }
+  #players li, #wplayers li { display: flex; align-items: center; gap: 9px; padding: 7px 0; border-bottom: 1px solid #e3ddcf; font-size: 14px; }
+  #players li:last-child, #wplayers li:last-child { border-bottom: 0; }
+  .swatch { width: 12px; height: 12px; border: 1.5px solid var(--ink); flex: none; }
+  .shape-ico { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; border: 1px solid var(--line); width: 20px; height: 20px; display: grid; place-items: center; flex: none; }
+  .pname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .badge { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; border: 1px solid var(--line); padding: 2px 6px; }
+  .badge.it { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .badge.you { background: var(--ink); color: var(--paper); }
+  .badge.lead { background: #fff; }
+  .tags { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--muted); }
+  .empty { color: var(--muted); font-style: italic; }
+  .kick { padding: 3px 7px; font-size: 10px; }
+
+  .arena-card { background: var(--panel); border: 2px solid var(--line); }
+  .arena-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 2px solid var(--line); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; }
+  #banner { margin: 0; padding: 9px 14px; font-size: 14px; border-bottom: 2px solid var(--line); background: #efe9dc; }
+  #banner.is-it { background: var(--accent); color: #fff; }
+  #banner.safe { background: var(--ink); color: var(--paper); }
+  .canvas-wrap { background: var(--arena); line-height: 0; position: relative; }
+  canvas { width: 100%; height: auto; display: block; touch-action: none; cursor: crosshair; }
+  .arena-foot { display: flex; justify-content: space-between; gap: 10px; padding: 8px 14px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; color: var(--muted); border-top: 2px solid var(--line); }
+  #winner { display: none; margin: 0; padding: 12px 14px; border-bottom: 2px solid var(--line); background: var(--accent-soft); }
+  #winner.show { display: block; }
+
+  #error { display: none; max-width: 1080px; margin: 12px auto 0; padding: 9px 14px; border: 2px solid var(--accent); background: var(--accent-soft); font-size: 14px; }
+  #error.show { display: block; }
+  kbd { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; border: 1px solid var(--line); border-bottom-width: 2px; padding: 1px 5px; background: #fff; }
+  .foot { max-width: 1080px; margin: 0 auto; padding: 0 18px 28px; color: var(--muted); font-size: 13px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .hint { font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <div class="mark">T</div>
+      <div><h1>Tag Arena</h1><small id="roomLabel">lobby select</small></div>
+    </div>
+    <div class="conn"><span id="connDot" class="dot"></span><span id="connText">connecting</span></div>
+  </div>
+</div>
+
+<div id="error"></div>
+
+<!-- LANDING -->
+<div id="screen-landing" class="wrap">
+  <div class="card" style="margin-bottom:16px">
+    <h2>Your runner</h2>
+    <div class="body">
+      <label class="small" for="name">Display name</label>
+      <input id="name" type="text" maxlength="16" autocomplete="off" />
+      <label class="small">Color</label>
+      <div class="swatches" id="colors"></div>
+      <div class="row2">
+        <div>
+          <label class="small">Shape</label>
+          <div class="opt-row" id="shapes"></div>
+        </div>
+        <div>
+          <label class="small">Trail</label>
+          <div class="opt-row" id="trails"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="grid2">
+    <div class="card">
+      <h2>Create lobby — you lead</h2>
+      <div class="body">
+        <div class="row2">
+          <div><label class="small">Max players</label><select id="s-max"><option>2</option><option>3</option><option>4</option><option selected>6</option><option>8</option></select></div>
+          <div><label class="small">Tags to win</label><select id="s-win"><option value="3">3</option><option value="5">5</option><option value="10" selected>10</option><option value="20">20</option><option value="0">Endless</option></select></div>
+        </div>
+        <div class="row2">
+          <div><label class="small">Speed</label><select id="s-speed"><option value="200">Slow</option><option value="260" selected>Normal</option><option value="320">Fast</option></select></div>
+          <div><label class="small">Tag cooldown</label><select id="s-cool"><option value="500">0.5s</option><option value="1000" selected>1s</option><option value="2000">2s</option></select></div>
+        </div>
+        <label class="small">Arena</label>
+        <select id="s-arena"><option value="small">Small 640x480</option><option value="classic" selected>Classic 800x600</option><option value="large">Large 960x720</option></select>
+        <label class="small">Bots</label>
+        <select id="s-bots"><option value="on" selected>Allowed</option><option value="off">Off</option></select>
+        <div class="btn-stack"><button id="create" class="primary">Create lobby</button></div>
+        <p class="hint">You become leader. You can change all of this later in the waiting room.</p>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Join lobby</h2>
+      <div class="body">
+        <label class="small" for="code">Lobby code</label>
+        <input id="code" class="code" type="text" maxlength="4" autocomplete="off" placeholder="AB12" />
+        <div class="btn-stack"><button id="join" class="primary">Join</button></div>
+        <p class="hint">Ask the leader for the 4-letter code, or open their invite link. Each browser tab counts as one player, so open a second tab to test solo.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- WAITING -->
+<div id="screen-waiting" class="wrap" style="display:none">
+  <div class="layout">
+    <div>
+      <div class="card" style="margin-bottom:16px">
+        <h2>Waiting room</h2>
+        <div class="body">
+          <div class="code-big" id="wcode">----</div>
+          <div style="display:flex;gap:8px">
+            <input id="invite" type="text" readonly style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px" />
+            <button id="copy">Copy</button>
+          </div>
+          <p class="hint" id="whint">Share the code or link. Leader presses Start when everyone is in.</p>
+          <div class="btn-row" style="margin-top:10px">
+            <button id="start" class="primary">Start game</button>
+            <button id="wleave">Leave</button>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Players</h2>
+        <div class="body">
+          <ul id="wplayers"></ul>
+          <label class="small" style="margin-top:10px">Bot difficulty</label>
+          <div class="btn-row"><select id="wbotdiff"><option value="easy">Easy</option><option value="medium">Medium</option><option value="hard" selected>Hard</option></select><button id="wbot">Add bot</button></div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="card" style="margin-bottom:16px">
+        <h2>Your look</h2>
+        <div class="body">
+          <label class="small" for="wname">Name</label>
+          <input id="wname" type="text" maxlength="16" />
+          <label class="small">Color</label>
+          <div class="swatches" id="wcolors"></div>
+          <label class="small">Shape</label>
+          <div class="opt-row" id="wshapes"></div>
+          <label class="small">Trail</label>
+          <div class="opt-row" id="wtrails"></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Lobby settings</h2>
+        <div class="body">
+          <p class="hint" id="lockHint" style="margin-top:0">Only the leader can edit.</p>
+          <label class="small">Max players</label><select id="w-max"><option>2</option><option>3</option><option>4</option><option>6</option><option>8</option></select>
+          <label class="small">Tags to win</label><select id="w-win"><option value="3">3</option><option value="5">5</option><option value="10">10</option><option value="20">20</option><option value="0">Endless</option></select>
+          <label class="small">Speed</label><select id="w-speed"><option value="200">Slow</option><option value="260">Normal</option><option value="320">Fast</option></select>
+          <label class="small">Tag cooldown</label><select id="w-cool"><option value="500">0.5s</option><option value="1000">1s</option><option value="2000">2s</option></select>
+          <label class="small">Arena</label><select id="w-arena"><option value="small">Small</option><option value="classic">Classic</option><option value="large">Large</option></select>
+          <label class="small">Bots</label><select id="w-bots"><option value="on">Allowed</option><option value="off">Off</option></select>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- GAME -->
+<div id="screen-game" class="wrap" style="display:none">
+  <div class="layout">
+    <div class="arena-card">
+      <div class="arena-head"><strong id="gtitle">Arena</strong><span id="countLabel">0 players</span></div>
+      <p id="banner">Playing</p>
+      <div id="winner"><span id="winnerText"></span><div class="btn-row" style="margin-top:8px"><button id="again">Play again</button><button id="tobby">Back to lobby</button></div></div>
+      <div class="canvas-wrap"><canvas id="game" width="800" height="600"></canvas></div>
+      <div class="arena-foot"><span id="itLabel"></span><span id="scoreLabel"></span></div>
+    </div>
+    <div class="side" style="display:grid;gap:14px">
+      <div class="card"><h2>Players</h2><div class="body"><ul id="players"></ul></div></div>
+      <div class="card"><h2>Lobby</h2><div class="body">
+        <div class="btn-stack">
+          <label class="small" style="margin:0">Bot difficulty</label>
+          <div class="btn-row"><select id="gbotdiff"><option value="easy">Easy</option><option value="medium">Medium</option><option value="hard" selected>Hard</option></select><button id="gaddbot">Add bot</button></div>
+          <button id="gend">End game (leader)</button>
+          <button id="gleave">Leave lobby</button>
+        </div>
+        <p class="hint"><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> or arrows. Drag on touch.</p>
+      </div></div>
+    </div>
+  </div>
+</div>
+
+<p class="foot">Node + ws, server authoritative at 30hz. You must create or join a lobby — no quick play.</p>
+
+<script>
+const COLORS = ["#ffe066","#8ce99a","#74c0fc","#ffa8a8","#da77f2","#ff922b","#63e6be","#e599f7"];
+const SHAPES = ["circle","square","triangle"];
+const TRAILS = ["none","dots","line"];
+
+if (!sessionStorage.getItem("tag-id")) sessionStorage.setItem("tag-id", Math.random().toString(36).slice(2));
+const myId = sessionStorage.getItem("tag-id");
+
+const profile = {
+  name: sessionStorage.getItem("tag-name") || ("Player-" + myId.slice(0,4)),
+  color: sessionStorage.getItem("tag-color") || COLORS[Math.floor(Math.random()*COLORS.length)],
+  shape: sessionStorage.getItem("tag-shape") || "circle",
+  trail: sessionStorage.getItem("tag-trail") || "none",
+};
+if (!COLORS.includes(profile.color)) profile.color = COLORS[0];
+if (!SHAPES.includes(profile.shape)) profile.shape = "circle";
+if (!TRAILS.includes(profile.trail)) profile.trail = "none";
+
+function saveProfile() {
+  sessionStorage.setItem("tag-name", profile.name);
+  sessionStorage.setItem("tag-color", profile.color);
+  sessionStorage.setItem("tag-shape", profile.shape);
+  sessionStorage.setItem("tag-trail", profile.trail);
+}
+
+const $ = (id) => document.getElementById(id);
+const canvas = $("game"), ctx = canvas.getContext("2d");
+const errBox = $("error");
+let errTimer = null;
+function showError(m) {
+  errBox.textContent = m; errBox.classList.add("show");
+  clearTimeout(errTimer); errTimer = setTimeout(()=>errBox.classList.remove("show"), 3500);
+}
+
+let socket = null;
+let lobby = null; // last lobby msg
+let game = null; // last state msg
+let screen = "landing";
+let renderPos = {};
+let trailHist = {};
+
+function setConn(on, text) {
+  $("connDot").className = "dot" + (on===true?" on":on===false?" off":"");
+  $("connText").textContent = text;
+}
+function show(which) {
+  screen = which;
+  $("screen-landing").style.display = which==="landing" ? "" : "none";
+  $("screen-waiting").style.display = which==="waiting" ? "" : "none";
+  $("screen-game").style.display = which==="game" ? "" : "none";
+  if (which==="landing") $("roomLabel").textContent = "lobby select";
+}
+
+function connect() {
+  setConn(null, "connecting");
+  socket = new WebSocket(location.origin.replace("http","ws"));
+  socket.addEventListener("open", ()=> setConn(true,"connected"));
+  socket.addEventListener("close", ()=> { setConn(false,"offline — retrying"); setTimeout(connect,1200); });
+  socket.addEventListener("message", (e)=>{
+    let m; try { m = JSON.parse(e.data); } catch { return; }
+    if (m.t==="lobby") { lobby = m; game = null; renderWaiting(); show("waiting"); }
+    else if (m.t==="state") { game = m; lobby = m; renderGame(); show("game"); }
+    else if (m.t==="error") showError(m.msg);
+    else if (m.t==="kicked") { lobby=null; game=null; showError("You were kicked."); show("landing"); }
+    else if (m.t==="left") { lobby=null; game=null; show("landing"); }
+  });
+}
+
+function send(o){ if (socket && socket.readyState===WebSocket.OPEN) socket.send(JSON.stringify(o)); }
+function currentSettings() {
+  return {
+    maxPlayers: parseInt($("s-max").value,10),
+    tagsToWin: parseInt($("s-win").value,10),
+    speed: parseInt($("s-speed").value,10),
+    cooldownMs: parseInt($("s-cool").value,10),
+    arena: $("s-arena").value,
+    allowBots: $("s-bots").value==="on",
+  };
+}
+
+// pickers
+function buildPickers() {
+  const mk = (el, items, get, set, render) => {
+    const box = $(el); box.innerHTML="";
+    items.forEach(v=>{
+      const b=document.createElement("button");
+      if (el.includes("color")) { b.className="sw"+(get()===v?" sel":""); b.style.background=v; b.title=v; }
+      else { b.textContent=v; b.className=get()===v?"sel":""; }
+      b.onclick=()=>{ set(v); saveProfile(); buildPickers(); pushLook(); };
+      box.appendChild(b);
+    });
+  };
+  mk("colors", COLORS, ()=>profile.color, v=>profile.color=v);
+  mk("shapes", SHAPES, ()=>profile.shape, v=>profile.shape=v);
+  mk("trails", TRAILS, ()=>profile.trail, v=>profile.trail=v);
+  mk("wcolors", COLORS, ()=>profile.color, v=>profile.color=v);
+  mk("wshapes", SHAPES, ()=>profile.shape, v=>profile.shape=v);
+  mk("wtrails", TRAILS, ()=>profile.trail, v=>profile.trail=v);
+  $("name").value = profile.name;
+  $("wname").value = profile.name;
+}
+function pushLook(){
+  if (screen!=="waiting") return;
+  send({ t:"updateLook", name: profile.name, look:{ color:profile.color, shape:profile.shape, trail:profile.trail } });
+}
+
+$("name").addEventListener("change", ()=>{ profile.name=$("name").value.slice(0,16)||profile.name; saveProfile(); });
+$("wname").addEventListener("change", ()=>{ profile.name=$("wname").value.slice(0,16)||profile.name; saveProfile(); $("name").value=profile.name; pushLook(); });
+
+$("create").onclick = ()=>{
+  profile.name = $("name").value.slice(0,16).trim() || profile.name; saveProfile();
+  send({ t:"createLobby", id: myId, name: profile.name, look:{color:profile.color,shape:profile.shape,trail:profile.trail}, settings: currentSettings() });
+};
+$("join").onclick = ()=>{
+  profile.name = $("name").value.slice(0,16).trim() || profile.name; saveProfile();
+  const code = $("code").value.toUpperCase().trim();
+  if (!code) { showError("Enter a lobby code."); return; }
+  send({ t:"joinLobby", code, id: myId, name: profile.name, look:{color:profile.color,shape:profile.shape,trail:profile.trail} });
+};
+$("code").addEventListener("keydown",(e)=>{ if(e.key==="Enter") $("join").click(); });
+
+["w-max","w-win","w-speed","w-cool","w-arena","w-bots"].forEach(id=>{
+  $(id).addEventListener("change", ()=>{
+    if (!lobby) return;
+    if (lobby.leaderId!==myId) return;
+    send({ t:"updateSettings", settings:{
+      maxPlayers: parseInt($("w-max").value,10),
+      tagsToWin: parseInt($("w-win").value,10),
+      speed: parseInt($("w-speed").value,10),
+      cooldownMs: parseInt($("w-cool").value,10),
+      arena: $("w-arena").value,
+      allowBots: $("w-bots").value==="on",
+    }});
+  });
+});
+
+$("start").onclick = ()=> send({t:"startGame"});
+$("gend").onclick = ()=> send({t:"endGame"});
+$("again").onclick = ()=> send({t:"startGame"});
+$("tobby").onclick = ()=> send({t:"endGame"});
+$("wleave").onclick = ()=> send({t:"leaveLobby"});
+$("gleave").onclick = ()=> send({t:"leaveLobby"});
+$("wbot").onclick = ()=> send({t:"addBot", difficulty: $("wbotdiff").value});
+$("gaddbot").onclick = ()=> send({t:"addBot", difficulty: $("gbotdiff").value});
+$("copy").onclick = async ()=>{
+  try { await navigator.clipboard.writeText($("invite").value); $("copy").textContent="Copied"; setTimeout(()=>$("copy").textContent="Copy",1200); }
+  catch { $("invite").select(); document.execCommand("copy"); }
+};
+
+// waiting render
+function playerRow(p, isLeader, canKick){
+  const li=document.createElement("li");
+  const sw=document.createElement("span"); sw.className="swatch"; sw.style.background=p.color;
+  const sh=document.createElement("span"); sh.className="shape-ico"; sh.textContent=p.shape==="circle"?"O":p.shape==="square"?"S":"T";
+  const nm=document.createElement("span"); nm.className="pname"; nm.textContent=p.bot?(p.name+" ("+(p.difficulty||"hard")+ ")"):p.name;
+  li.append(sw,sh,nm);
+  const tg=document.createElement("span"); tg.className="tags"; tg.textContent=(p.tags||0)+" tags"; li.appendChild(tg);
+  if (p.it){ const b=document.createElement("span"); b.className="badge it"; b.textContent="IT"; li.appendChild(b); }
+  if (p.id===lobby.leaderId){ const b=document.createElement("span"); b.className="badge lead"; b.textContent="lead"; li.appendChild(b); }
+  if (p.id===myId){ const b=document.createElement("span"); b.className="badge you"; b.textContent="you"; li.appendChild(b); }
+  if (canKick && p.id!==myId){
+    if (p.bot) {
+      const k=document.createElement("button"); k.className="kick"; k.textContent="remove";
+      k.onclick=()=>send({t:"removeBot",targetId:p.id}); li.appendChild(k);
+    } else {
+      const k=document.createElement("button"); k.className="kick"; k.textContent="kick";
+      k.onclick=()=>send({t:"kick",targetId:p.id}); li.appendChild(k);
+    }
+  }
+  return li;
+}
+
+function renderWaiting(){
+  if (!lobby) return;
+  $("roomLabel").textContent = "lobby " + lobby.code;
+  $("wcode").textContent = lobby.code;
+  $("invite").value = location.origin + location.pathname + "?lobby=" + lobby.code;
+  const isLead = lobby.leaderId===myId;
+  $("start").disabled = !isLead;
+  $("start").textContent = isLead ? "Start game" : "Waiting for leader";
+  $("lockHint").textContent = isLead ? "You are leader. Changes apply to everyone." : "Only the leader can edit.";
+  ["w-max","w-win","w-speed","w-cool","w-arena","w-bots"].forEach(id=>{ $(id).disabled=!isLead; });
+  $("w-max").value=String(lobby.settings.maxPlayers);
+  $("w-win").value=String(lobby.settings.tagsToWin);
+  $("w-speed").value=String(lobby.settings.speed);
+  $("w-cool").value=String(lobby.settings.cooldownMs);
+  $("w-arena").value=lobby.settings.arena;
+  $("w-bots").value=lobby.settings.allowBots?"on":"off";
+  const ul=$("wplayers"); ul.innerHTML="";
+  lobby.players.forEach(p=>ul.appendChild(playerRow(p,true,isLead)));
+  if (lobby.players.length<2) {
+    $("whint").textContent="Need at least 2 in the room (or add a bot), then leader starts.";
+  } else {
+    $("whint").textContent = isLead ? "Everyone is in. Press Start." : "Waiting for leader to start.";
+  }
+  history.replaceState(null,"","?lobby="+lobby.code);
+}
+
+// game render + draw
+const keys={};
+addEventListener("keydown",(e)=>{
+  const k=e.key.toLowerCase();
+  if(k==="arrowup"||k==="w")keys.up=true;
+  if(k==="arrowdown"||k==="s")keys.down=true;
+  if(k==="arrowleft"||k==="a")keys.left=true;
+  if(k==="arrowright"||k==="d")keys.right=true;
+  if(["arrowup","arrowdown","arrowleft","arrowright"," "].includes(k))e.preventDefault();
+});
+addEventListener("keyup",(e)=>{
+  const k=e.key.toLowerCase();
+  if(k==="arrowup"||k==="w")keys.up=false;
+  if(k==="arrowdown"||k==="s")keys.down=false;
+  if(k==="arrowleft"||k==="a")keys.left=false;
+  if(k==="arrowright"||k==="d")keys.right=false;
+});
+let dragVec=null, dragging=false;
+function canvasPos(e){ const r=canvas.getBoundingClientRect(); return {x:(e.clientX-r.left)*(canvas.width/r.width), y:(e.clientY-r.top)*(canvas.height/r.height)}; }
+canvas.addEventListener("pointerdown",(e)=>{dragging=true;canvas.setPointerCapture(e.pointerId);});
+canvas.addEventListener("pointermove",(e)=>{
+  if(!dragging)return;
+  const p=canvasPos(e), me=renderPos[myId];
+  if(!me)return;
+  const dx=p.x-me.x, dy=p.y-me.y, d=Math.hypot(dx,dy);
+  dragVec = d>12 ? {x:dx/d*Math.min(1,d/120), y:dy/d*Math.min(1,d/120)} : null;
+});
+addEventListener("pointerup",()=>{dragging=false;dragVec=null;});
+setInterval(()=>{ if(screen==="game") send({t:"input",keys,moveVec:dragVec}); },50);
+
+function renderGame(){
+  if(!game)return;
+  $("roomLabel").textContent="lobby "+game.code;
+  if (game.arena && (canvas.width!==game.arena.w || canvas.height!==game.arena.h)) {
+    canvas.width=game.arena.w; canvas.height=game.arena.h;
+  }
+  $("gtitle").textContent="Arena — "+game.code;
+  $("countLabel").textContent=game.players.length+" players";
+  const it=game.players.find(p=>p.it);
+  const me=game.players.find(p=>p.id===myId);
+  const sorted=game.players.slice().sort((a,b)=>(b.tags||0)-(a.tags||0));
+  $("itLabel").textContent=it?("it: "+it.name+(it.id===myId?" (you)":"")):"";
+  const ttw=game.settings?game.settings.tagsToWin:10;
+  $("scoreLabel").textContent=ttw>0?("first to "+ttw):"endless";
+  const bn=$("banner");
+  const w=$("winner");
+  if (game.winnerId){
+    const winp=game.players.find(p=>p.id===game.winnerId);
+    w.classList.add("show");
+    $("winnerText").innerHTML="<b>"+(winp?winp.name:"Someone")+" wins with "+(winp?winp.tags:0)+" tags.</b> "+
+      (game.leaderId===myId ? "Press Play again or Back to lobby so others can join." : "Waiting for leader. New players can join once leader goes back to lobby.");
+    $("again").style.display = game.leaderId===myId ? "" : "none";
+    $("tobby").style.display = game.leaderId===myId ? "" : "none";
+    bn.textContent="Game over."; bn.className="";
+  } else {
+    w.classList.remove("show");
+    if(!me){bn.textContent="You are out of this round.";bn.className="";}
+    else if(me.id===(it&&it.id)){bn.textContent="You are IT — go tag someone.";bn.className="is-it";}
+    else if(it){bn.textContent=it.name+" is IT — keep your distance.";bn.className="safe";}
+  }
+  const ul=$("players"); ul.innerHTML="";
+  const isLeadGame = game.leaderId===myId;
+  sorted.forEach(p=>{
+    const li=document.createElement("li");
+    const sw=document.createElement("span");sw.className="swatch";sw.style.background=p.color;
+    const nm=document.createElement("span");nm.className="pname";nm.textContent=p.bot?(p.name+" ("+(p.difficulty||"hard")+ ")"):p.name;
+    li.append(sw,nm);
+    const tg=document.createElement("span");tg.className="tags";tg.textContent=(p.tags||0)+" tags";li.appendChild(tg);
+    if(p.it){const b=document.createElement("span");b.className="badge it";b.textContent="IT";li.appendChild(b);}
+    if(p.id===myId){const b=document.createElement("span");b.className="badge you";b.textContent="you";li.appendChild(b);}
+    if (isLeadGame && p.bot) {
+      const k=document.createElement("button");k.className="kick";k.textContent="remove";
+      k.onclick=()=>send({t:"removeBot",targetId:p.id});li.appendChild(k);
+    }
+    ul.appendChild(li);
+  });
+  $("gend").disabled = !(game.leaderId===myId);
+  history.replaceState(null,"","?lobby="+game.code);
+}
+
+function drawShape(x,y,size,shape,color,isIt){
+  ctx.beginPath();
+  if(shape==="square"){ ctx.rect(x-size,y-size,size*2,size*2); }
+  else if(shape==="triangle"){ ctx.moveTo(x,y-size-2); ctx.lineTo(x+size+2,y+size); ctx.lineTo(x-size-2,y+size); ctx.closePath(); }
+  else { ctx.arc(x,y,size,0,Math.PI*2); }
+  ctx.fillStyle=color; ctx.fill();
+  ctx.lineWidth=2.5; ctx.strokeStyle="#000"; ctx.stroke();
+  if(isIt){
+    ctx.beginPath(); ctx.arc(x,y,size+9,0,Math.PI*2);
+    ctx.strokeStyle="#ff6b6b"; ctx.lineWidth=2; ctx.setLineDash([7,5]); ctx.stroke(); ctx.setLineDash([]);
+  }
+}
+function drawGrid(){
+  ctx.fillStyle="#131109"; ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle="rgba(255,253,247,0.09)";
+  for(let x=40;x<canvas.width;x+=40) for(let y=40;y<canvas.height;y+=40) ctx.fillRect(x-1,y-1,2,2);
+  ctx.strokeStyle="rgba(255,253,247,0.22)"; ctx.lineWidth=2; ctx.strokeRect(4,4,canvas.width-8,canvas.height-8);
+}
+function draw(){
+  drawGrid();
+  const list = game?game.players:(lobby?lobby.players:[]);
+  for(const p of list){
+    if(!renderPos[p.id]){renderPos[p.id]={x:p.x,y:p.y};trailHist[p.id]=[];}
+    renderPos[p.id].x+=(p.x-renderPos[p.id].x)*0.3;
+    renderPos[p.id].y+=(p.y-renderPos[p.id].y)*0.3;
+    const h=trailHist[p.id]||(trailHist[p.id]=[]);
+    h.push({x:renderPos[p.id].x,y:renderPos[p.id].y});
+    if(h.length>24)h.shift();
+  }
+  for(const id of Object.keys(renderPos)){
+    if(!list.some(p=>p.id===id)){delete renderPos[id];delete trailHist[id];}
+  }
+  // trails under players
+  for(const p of list){
+    const h=trailHist[p.id]||[];
+    if(p.trail==="dots"&&h.length>1){
+      for(let i=0;i<h.length;i+=3){
+        const a=i/h.length*0.5;
+        ctx.beginPath();ctx.arc(h[i].x,h[i].y,3,0,Math.PI*2);
+        ctx.fillStyle=p.color+"";ctx.globalAlpha=a;ctx.fill();ctx.globalAlpha=1;
+      }
+    } else if(p.trail==="line"&&h.length>1){
+      ctx.beginPath();ctx.moveTo(h[0].x,h[0].y);
+      for(let i=1;i<h.length;i++)ctx.lineTo(h[i].x,h[i].y);
+      ctx.strokeStyle=p.color;ctx.globalAlpha=0.6;ctx.lineWidth=3;ctx.stroke();ctx.globalAlpha=1;
+    }
+  }
+  // players, me last so YOU stays on top
+  const ordered=list.slice().sort((a,b)=>(a.id===myId?1:0)-(b.id===myId?1:0));
+  for(const p of ordered){
+    const r=renderPos[p.id]||p;
+    drawShape(r.x,r.y,15,p.shape||"circle",p.color,p.it);
+    ctx.font="12px ui-monospace, Menlo, Consolas, monospace";ctx.textAlign="center";
+    const label=(p.it?"IT ":"")+p.name;
+    ctx.lineWidth=3;ctx.strokeStyle="rgba(0,0,0,0.85)";ctx.strokeText(label,r.x,r.y-24);
+    ctx.fillStyle="#fffdf7";ctx.fillText(label,r.x,r.y-24);
+    if(p.id===myId&&screen==="game"){
+      const t="YOU";
+      ctx.font="bold 11px ui-monospace, Menlo, Consolas, monospace";
+      const wdt=ctx.measureText(t).width+14;
+      const bx=r.x-wdt/2, by=r.y+16;
+      ctx.fillStyle="#000";ctx.fillRect(bx,by,wdt,18);
+      ctx.fillStyle="#ffe066";ctx.fillText(t,r.x,by+13);
+    }
+  }
+  requestAnimationFrame(draw);
+}
+
+// init
+(function init(){
+  const q=new URLSearchParams(location.search).get("lobby");
+  if(q) $("code").value=q.toUpperCase();
+  buildPickers();
+  connect();
+  draw();
+})();
+</script>
+</body>
+</html>

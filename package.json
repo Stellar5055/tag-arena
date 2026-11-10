@@ -1,0 +1,12 @@
+{
+  "name": "tag-arena-multiplayer",
+  "version": "1.0.0",
+  "description": "2-key Tag Arena - tiny authoritative multiplayer tag game (Crescent multiplayer card)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
