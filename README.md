@@ -2,6 +2,8 @@
 
 Small authoritative multiplayer tag game. Started from the Crescent multiplayer guide (Node + `ws`), now with lobbies, waiting room, leader settings, and look customization.
 
+**Live demo:** https://tag-arena-2gu4.onrender.com (free Render host — first load can take ~60s if it was asleep, then create a lobby and open the invite in a second tab).
+
 You must create or join a lobby. There is no quick play.
 
 ## Try with two tabs
