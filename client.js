@@ -351,13 +351,15 @@ function renderGame(){
       $("dashHud").textContent = "dashing";
       bar.style.width = "100%";
       bar.className = "active";
-    } else if (charges <= 0) {
-      $("dashHud").textContent = "dash " + (left / 1000).toFixed(1) + "s";
-      bar.style.width = "4%";
-      bar.className = "cool";
     } else if (charges < max) {
-      $("dashHud").textContent = charges + " dash";
-      bar.style.width = Math.round((1 - left / total) * 100) + "%";
+      // A charge is still regenerating: fill the bar 0→100% as dashMsLeft counts down.
+      const pct = total > 0 ? Math.max(4, Math.min(100, Math.round((1 - left / total) * 100))) : 4;
+      if (charges <= 0) {
+        $("dashHud").textContent = "dash " + (left / 1000).toFixed(1) + "s";
+      } else {
+        $("dashHud").textContent = charges + " dash";
+      }
+      bar.style.width = pct + "%";
       bar.className = "cool";
     } else {
       $("dashHud").textContent = max > 1 ? max + " dashes" : "dash ready";
@@ -414,6 +416,19 @@ function renderGame(){
         (game.leaderId===myId ? "Press Play again or Back to lobby so others can join." : "Waiting for leader. New players can join once leader goes back to lobby.");
     }
     wt.append(head, detail);
+    // Final standings, textContent-built so names cannot inject markup.
+    const board = $("winBoard");
+    board.textContent = "";
+    let topTags = 0;
+    for (const p of sorted) topTags = Math.max(topTags, p.tags || 0);
+    sorted.forEach((p, i) => {
+      const li = document.createElement("li");
+      const isWon = game.winTeam === "draw" ? (p.tags || 0) === topTags : p.id === game.winnerId;
+      if (isWon) li.className = "won";
+      li.textContent = (i + 1) + ". " + p.name + " — " + (p.tags || 0) + " tags" +
+        (isWon ? " (winner)" : "") + (p.id === myId ? " (you)" : "") + (p.bot ? " [bot]" : "");
+      board.appendChild(li);
+    });
     $("again").style.display = game.leaderId===myId ? "" : "none";
     $("tobby").style.display = game.leaderId===myId ? "" : "none";
     bn.textContent="Game over."; bn.className="";

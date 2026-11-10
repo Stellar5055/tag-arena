@@ -8,6 +8,7 @@ const {
   cleanSettings,
   cleanDifficulty,
   cleanName,
+  publicPlayers,
   isTagTouch,
   classicTagTarget,
   classicTimeWinner,
@@ -116,4 +117,39 @@ test("classic timer: most tags wins, ties draw, spectators excluded", () => {
 
   assert.equal(classicTimeWinner([]), null);
   assert.equal(classicTimeWinner([spec]), null);
+});
+
+test("dashMsLeft counts down the next charge while partially spent", () => {
+  const now = Date.now();
+  const base = {
+    id: "p", name: "P", color: "#fff", shape: "circle", trail: "none",
+    x: 10, y: 10, it: false, bot: false, tags: 0,
+    dashUntil: 0, frozen: false, spectate: false, ready: true, lastActiveAt: now,
+  };
+  const lobbyOf = (dashCdMs, player) => ({
+    settings: { dashCdMs },
+    players: new Map([[player.id, player]]),
+  });
+
+  // Full charges: nothing regenerating.
+  const full = publicPlayers(lobbyOf(3000, { ...base, dashCharges: 2, dashNextAt: 0 }))[0];
+  assert.equal(full.dashCharges, 2);
+  assert.equal(full.dashMsLeft, 0);
+  assert.equal(full.dashCdTotal, 3000);
+
+  // One charge spent: ms left must be the live countdown, not 0.
+  const partial = publicPlayers(lobbyOf(3000, { ...base, dashCharges: 1, dashNextAt: now + 2000 }))[0];
+  assert.equal(partial.dashCharges, 1);
+  assert.ok(partial.dashMsLeft > 1000 && partial.dashMsLeft <= 2000, `got ${partial.dashMsLeft}`);
+
+  // Empty: still counts down the next charge.
+  const empty = publicPlayers(lobbyOf(3000, { ...base, dashCharges: 0, dashNextAt: now + 2500 }))[0];
+  assert.equal(empty.dashCharges, 0);
+  assert.ok(empty.dashMsLeft > 1500 && empty.dashMsLeft <= 2500, `got ${empty.dashMsLeft}`);
+
+  // Dash off: everything zeroed.
+  const off = publicPlayers(lobbyOf(0, { ...base, dashCharges: 0, dashNextAt: now + 2500 }))[0];
+  assert.equal(off.dashCharges, 0);
+  assert.equal(off.dashMsLeft, 0);
+  assert.equal(off.dashCdTotal, 0);
 });

@@ -96,6 +96,9 @@
   }
   #winner { display: none; margin: 0; padding: 12px 14px; border-bottom: 2px solid var(--line); background: var(--accent-soft); }
   #winner.show { display: block; }
+  #winBoard { margin: 8px 0 4px; padding-left: 24px; font-size: 14px; }
+  #winBoard li { margin-bottom: 3px; }
+  #winBoard li.won { font-weight: 700; }
 
   #error { display: none; max-width: 1080px; margin: 12px auto 0; padding: 9px 14px; border: 2px solid var(--accent); background: var(--accent-soft); font-size: 14px; }
   #error.show { display: block; }
