@@ -12,7 +12,10 @@
     "url": "https://github.com/Stellar5055/tag-arena.git"
   },
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "node --test test/game.test.js",
+    "check": "node --check server.js && node --check client.js && node --check test/game.test.js"
   },
   "dependencies": {
     "ws": "^8.18.0"

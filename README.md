@@ -8,13 +8,13 @@ You must create or join a lobby. There is no quick play.
 
 ## Try with two tabs
 
-1. `npm install` then `node server.js`
-2. Open `http://localhost:3000`
-3. Tab A: set name, color, shape, trail. Keep default settings (tags to win 10). Press Create lobby. You are leader. Note the 4-letter code.
+1. `npm install` then `node server.js` (`npm run dev` is the same, `npm test` runs 6 unit tests, `npm run check` syntax-checks `server.js`/`client.js`/tests)
+2. Open `http://localhost:3000` (`GET /healthz` returns `{ok:true, lobbies:n}` for hosts/load-balancers)
+3. Tab A: set name, color, shape, trail. Keep default settings (tags to win 10). Press Create lobby. You are leader. Note the lobby code.
 4. Tab B: set a different name and look. Enter the code, press Join. Both tabs land in the same waiting room.
 5. Both tabs press Ready up. Tab A (leader) presses Start game.
 6. Move with WASD or arrows. On touch, drag on the arena. Space or the Dash button to dash (2 charges, 4s regen). If IT touches you, you become IT. First to 10 tags wins.
-7. Leader can End game back to waiting, kick players, add or remove bots. Spectators who joined mid-game auto-join next round.
+7. Leader can End game back to waiting, kick players, add or remove bots (adding bots is leader-only). Spectators who joined mid-game auto-join next round. If your socket drops (e.g. Render wake), the client auto-rejoins the same seat.
 
 Solo: create a lobby, press Add bot, Ready up, then Start.
 
@@ -46,13 +46,14 @@ Leader manages bots with Add bot (pick Easy, Medium, or Hard, max 3, counts towa
 
 ## How the netcode works
 
-- WebSocket via `ws`. Client builds the URL with `location.origin.replace("http","ws")`.
-- Server keeps `lobbies: Map<code, {leaderId, state, settings, players, sockets}>`. Code is 4 chars. Lobbies expire after 3 hours. Human names starting with "bot" are reset to Player.
+- WebSocket via `ws` (`maxPayload: 8KB`, unknown message types dropped, `input` rate-limited to one per 20ms and fully validated). Client builds the URL with `location.origin.replace("http","ws")`.
+- Server keeps `lobbies: Map<code, {leaderId, state, settings, players, sockets}>`. Codes start at 4 chars and grow to 6 on collision. Lobbies expire after 3 hours. Human names starting with "bot" are reset to Player.
 - Waiting: server sends `{t:"lobby", ...}` on every change. Playing: server ticks at 30Hz and sends `{t:"state", ...}`. Bots think on their reaction clock and steer every tick.
-- Server is authoritative. Clients send `{t:"input", keys, moveVec, dash}` at 20Hz. Server moves at `settings.speed`, clamps to arena, checks tags by distance with `settings.cooldownMs` and a 200ms post-dash grace for the dasher, increments `tags`, sets `winnerId` at `settings.tagsToWin` (0 is endless).
-- Identity is a random id in `sessionStorage`, so two tabs stay two players.
+- Server is authoritative. Clients send `{t:"input", keys, moveVec, dash}` at 20Hz. Server moves at `settings.speed`, clamps to arena, checks tags by distance with `settings.cooldownMs` and a 200ms post-dash grace for the dasher, increments `tags`, sets `winnerId` at `settings.tagsToWin` (0 is endless). Tag helpers (`isTagTouch`, `classicTagTarget`, `freezeOutcome`) live in `server.js` and are covered by `test/game.test.js`.
+- Identity is a random id in `sessionStorage`, so two tabs stay two players. Last lobby code is also kept in `sessionStorage`, so a dropped socket auto-rejoins the same seat on reconnect.
 - Mid-game joins become spectators (max 4) and auto-join as players on End. Leader migrates to oldest human on leave. Empty lobbies are deleted.
-- Trails and the joystick ring are client-side. Shapes are drawn on canvas per player.
+- Trails and the joystick ring are client-side. Shapes are drawn on canvas per player. Winner banner is built with `textContent`, never `innerHTML`, so player names cannot inject markup.
+- Files: `server.js` (authoritative sim + lobby netcode, exports pure helpers when required), `client.js` (UI + canvas), `styles.css`, `index.html` (shell), `test/game.test.js` (6 tests).
 
 ## Settings (leader, waiting room only)
 
@@ -74,6 +75,8 @@ Listens on `process.env.PORT || 3000`. Needs a long-lived socket server.
 - Do not use Vercel, Netlify, or GitHub Pages for the server: they cannot hold a WebSocket open.
 
 Ship checklist: public repo link, live demo link that stays up, README with the 2-tab test (create, copy invite into a new tab, both ready up, start), a screenshot of two windows side by side, and a note of the lobby settings used.
+
+Ship artifacts here: `screenshot-landing.png` (landing page, default settings: 6 players / 10 tags / normal / 1s / classic / 3s dash / tag / bots allowed). The two-windows gameplay shot is still manual: open the invite link in a second tab side-by-side, both ready up, leader starts, screenshot mid-chase.
 
 ## License
 

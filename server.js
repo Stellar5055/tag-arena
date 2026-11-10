@@ -28,12 +28,19 @@ const lobbies = new Map();
 
 function makeCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  for (let tries = 0; tries < 50; tries++) {
-    let c = "";
-    for (let i = 0; i < 4; i++) c += chars[Math.floor(Math.random() * chars.length)];
-    if (!lobbies.has(c)) return c;
+  for (let len = 4; len <= 6; len++) {
+    for (let tries = 0; tries < 50; tries++) {
+      let c = "";
+      for (let i = 0; i < len; i++) c += chars[Math.floor(Math.random() * chars.length)];
+      if (!lobbies.has(c)) return c;
+    }
   }
-  return Math.random().toString(36).slice(2, 6).toUpperCase();
+  // Ultimate fallback: timestamp-based, loop until unique.
+  let c;
+  do {
+    c = Date.now().toString(36).slice(-6).toUpperCase().padStart(6, "X");
+  } while (lobbies.has(c));
+  return c;
 }
 
 function cleanName(n, isBot) {
@@ -187,6 +194,37 @@ const BOT_NAME_RE = /^bot[\s\d]/i;
 function cleanDifficulty(d) {
   const s = String(d || "hard").toLowerCase();
   return BOT_DIFFS[s] ? s : "hard";
+}
+
+// Pure helpers (exported for tests). isTagTouch mirrors the distance
+// check used in the tick loop: two players touch when closer than 2*RADIUS.
+function isTagTouch(a, b) {
+  if (!a || !b) return false;
+  return Math.hypot(a.x - b.x, a.y - b.y) < RADIUS * 2;
+}
+
+// Classic mode: returns the tagged player id, or null when no tag applies.
+// Mirrors the loop guards: cooldown elapsed, both eligible, target not in
+// post-dash grace.
+function classicTagTarget(itPlayer, players, now, tagCooldownUntil) {
+  if (!itPlayer || itPlayer.spectate || itPlayer.frozen) return null;
+  if (now < tagCooldownUntil) return null;
+  for (const q of players) {
+    if (q === itPlayer || q.spectate || q.frozen) continue;
+    if (now < (q.dashGraceUntil || 0)) continue;
+    if (isTagTouch(q, itPlayer)) return q.id;
+  }
+  return null;
+}
+
+// Freeze mode: "it" wins by freezing every non-spectator runner, or by
+// reaching tagsToWin. Runners win when the timer expires.
+function freezeOutcome(players, itPlayer, tagsToWin, timerExpired) {
+  const active = players.filter((p) => !p.spectate && p !== itPlayer);
+  if (active.length > 0 && active.every((p) => p.frozen)) return "it";
+  if (tagsToWin > 0 && itPlayer && (itPlayer.tags || 0) >= tagsToWin) return "it";
+  if (timerExpired) return "runners";
+  return null;
 }
 
 function makeBotPlayer(lobby, botsCount, difficulty) {
@@ -567,7 +605,7 @@ function resetForStart(lobby) {
 }
 
 // --- 30hz authoritative loop, only playing lobbies ---
-setInterval(() => {
+const tickTimer = setInterval(() => {
   const dt = 1 / 30;
   const now = Date.now();
   for (const lobby of lobbies.values()) {
@@ -703,19 +741,69 @@ setInterval(() => {
     broadcastState(lobby);
   }
 }, 1000 / 30);
+if (tickTimer.unref) tickTimer.unref();
+
+const STATIC_FILES = {
+  "/styles.css": { file: "styles.css", type: "text/css; charset=utf-8" },
+  "/client.js": { file: "client.js", type: "text/javascript; charset=utf-8" },
+};
 
 const server = http.createServer((req, res) => {
-  const urlPath = req.url.split("?")[0];
-  if (urlPath === "/" || urlPath === "/index.html") {
-    res.writeHead(200, { "Content-Type": "text/html" });
-    fs.createReadStream(path.join(__dirname, "index.html")).pipe(res);
-  } else {
-    res.writeHead(404);
-    res.end("not found");
+  if (req.method !== "GET") {
+    res.writeHead(405, { Allow: "GET" });
+    res.end("method not allowed");
+    return;
   }
+  const urlPath = req.url.split("?")[0];
+  if (urlPath === "/healthz") {
+    res.writeHead(200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    res.end(JSON.stringify({ ok: true, lobbies: lobbies.size }));
+    return;
+  }
+  if (urlPath === "/" || urlPath === "/index.html") {
+    res.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+      "Referrer-Policy": "no-referrer",
+    });
+    fs.createReadStream(path.join(__dirname, "index.html")).pipe(res);
+    return;
+  }
+  if (STATIC_FILES[urlPath]) {
+    const entry = STATIC_FILES[urlPath];
+    res.writeHead(200, {
+      "Content-Type": entry.type,
+      "Cache-Control": "public, max-age=3600",
+      "X-Content-Type-Options": "nosniff",
+    });
+    fs.createReadStream(path.join(__dirname, entry.file)).pipe(res);
+    return;
+  }
+  res.writeHead(404);
+  res.end("not found");
 });
 
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ server, maxPayload: 8 * 1024 });
+
+const KNOWN_MSG_TYPES = new Set([
+  "createLobby",
+  "joinLobby",
+  "updateLook",
+  "updateSettings",
+  "startGame",
+  "toggleReady",
+  "endGame",
+  "kick",
+  "addBot",
+  "removeBot",
+  "leaveLobby",
+  "input",
+]);
+const INPUT_MIN_GAP_MS = 20;
 
 function leaveCurrent(socket) {
   const ctx = socket.ctx;
@@ -743,6 +831,13 @@ wss.on("connection", (socket) => {
       msg = JSON.parse(data.toString());
     } catch {
       return;
+    }
+    if (!msg || typeof msg !== "object" || typeof msg.t !== "string") return;
+    if (!KNOWN_MSG_TYPES.has(msg.t)) return;
+    if (msg.t === "input") {
+      const nowMs = Date.now();
+      if (nowMs - (socket.lastInputAt || 0) < INPUT_MIN_GAP_MS) return;
+      socket.lastInputAt = nowMs;
     }
     const ctx = socket.ctx || {};
 
@@ -1051,6 +1146,10 @@ wss.on("connection", (socket) => {
       if (!ctx.code) return;
       const lobby = lobbies.get(ctx.code);
       if (!lobby) return;
+      if (lobby.leaderId !== ctx.playerId) {
+        sendError(socket, "Only the leader can add bots.");
+        return;
+      }
       if (!lobby.settings.allowBots) {
         sendError(socket, "Bots are turned off in settings.");
         return;
@@ -1105,15 +1204,23 @@ wss.on("connection", (socket) => {
       const now = Date.now();
       if (now < (p.frozenUntil || 0)) return;
       p.lastActiveAt = now;
+      const keys = msg.keys && typeof msg.keys === "object" ? msg.keys : {};
       p.keys = {
-        up: !!msg.keys?.up,
-        down: !!msg.keys?.down,
-        left: !!msg.keys?.left,
-        right: !!msg.keys?.right,
+        up: !!keys.up,
+        down: !!keys.down,
+        left: !!keys.left,
+        right: !!keys.right,
       };
-      if (msg.moveVec && Math.hypot(msg.moveVec.x, msg.moveVec.y) <= 1.5) {
-        p.moveVec = msg.moveVec;
-      } else if (!msg.moveVec) {
+      const mv = msg.moveVec;
+      if (
+        mv &&
+        typeof mv === "object" &&
+        Number.isFinite(mv.x) &&
+        Number.isFinite(mv.y) &&
+        Math.hypot(mv.x, mv.y) <= 1.5
+      ) {
+        p.moveVec = { x: mv.x, y: mv.y };
+      } else {
         p.moveVec = null;
       }
       if (msg.dash) {
@@ -1142,6 +1249,24 @@ wss.on("connection", (socket) => {
   });
 });
 
-server.listen(process.env.PORT || 3000, () => {
-  console.log("tag arena lobbies on", server.address().port);
-});
+if (require.main === module) {
+  server.listen(process.env.PORT || 3000, () => {
+    console.log("tag arena lobbies on", server.address().port);
+  });
+}
+
+module.exports = {
+  server,
+  tickTimer,
+  lobbies,
+  makeCode,
+  cleanName,
+  cleanLook,
+  cleanSettings,
+  cleanDifficulty,
+  isTagTouch,
+  classicTagTarget,
+  freezeOutcome,
+  RADIUS,
+  DEFAULT_SETTINGS,
+};
