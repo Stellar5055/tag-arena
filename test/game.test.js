@@ -10,8 +10,10 @@ const {
   cleanName,
   isTagTouch,
   classicTagTarget,
+  classicTimeWinner,
   freezeOutcome,
   RADIUS,
+  CLASSIC_DURATION_MS,
 } = require("../server.js");
 
 test("cleanSettings clamps to allowed values", () => {
@@ -96,4 +98,22 @@ test("freeze outcome: all-frozen and timer paths", () => {
 
   const scorer = { id: "it", tags: 10 };
   assert.equal(freezeOutcome([scorer, c], scorer, 10, false), "it");
+});
+
+test("classic timer: most tags wins, ties draw, spectators excluded", () => {
+  assert.equal(CLASSIC_DURATION_MS, 180000);
+
+  const a = { id: "a", tags: 7, spectate: false };
+  const b = { id: "b", tags: 4, spectate: false };
+  assert.deepEqual(classicTimeWinner([a, b]), { winnerId: "a", winTeam: "it" });
+
+  const c = { id: "c", tags: 7, spectate: false };
+  assert.deepEqual(classicTimeWinner([a, c]), { winnerId: null, winTeam: "draw" });
+
+  // Spectators never win, even with more tags.
+  const spec = { id: "spec", tags: 99, spectate: true };
+  assert.deepEqual(classicTimeWinner([a, b, spec]), { winnerId: "a", winTeam: "it" });
+
+  assert.equal(classicTimeWinner([]), null);
+  assert.equal(classicTimeWinner([spec]), null);
 });

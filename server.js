@@ -126,7 +126,7 @@ function publicPlayers(lobby) {
 }
 
 function lobbyTimeLeft(lobby) {
-  if (lobby.settings.gameMode !== "freeze" || lobby.state !== "playing" || !lobby.endsAt) return null;
+  if (lobby.state !== "playing" || !lobby.endsAt) return null;
   return Math.max(0, lobby.endsAt - Date.now());
 }
 
@@ -187,6 +187,7 @@ const HUMAN_DASH_MULT = 3.1;
 const DASH_MAX_CHARGES = 2;
 const DASH_REGEN_MS = 4000;
 const FREEZE_DURATION_MS = 120000;
+const CLASSIC_DURATION_MS = 180000;
 const IDLE_AFTER_MS = 15000;
 const LOBBY_TTL_MS = 3 * 60 * 60 * 1000;
 const BOT_NAME_RE = /^bot[\s\d]/i;
@@ -225,6 +226,20 @@ function freezeOutcome(players, itPlayer, tagsToWin, timerExpired) {
   if (tagsToWin > 0 && itPlayer && (itPlayer.tags || 0) >= tagsToWin) return "it";
   if (timerExpired) return "runners";
   return null;
+}
+
+// Classic mode timer: most tags wins when the clock runs out.
+// Returns { winnerId, winTeam } with winTeam "it" for a solo winner or
+// "draw" for a tie. Spectators are excluded. Returns null when nobody
+// played (empty active list).
+function classicTimeWinner(players) {
+  const active = players.filter((p) => !p.spectate);
+  if (active.length === 0) return null;
+  let best = -Infinity;
+  for (const p of active) best = Math.max(best, p.tags || 0);
+  const leaders = active.filter((p) => (p.tags || 0) === best);
+  if (leaders.length === 1) return { winnerId: leaders[0].id, winTeam: "it" };
+  return { winnerId: null, winTeam: "draw" };
 }
 
 function makeBotPlayer(lobby, botsCount, difficulty) {
@@ -558,7 +573,7 @@ function resetForStart(lobby) {
   lobby.winnerId = null;
   lobby.winTeam = null;
   lobby.tagCooldownUntil = Date.now() + 1500;
-  lobby.endsAt = lobby.settings.gameMode === "freeze" ? Date.now() + FREEZE_DURATION_MS : 0;
+  lobby.endsAt = Date.now() + (lobby.settings.gameMode === "freeze" ? FREEZE_DURATION_MS : CLASSIC_DURATION_MS);
   const now = Date.now();
   for (const p of lobby.players.values()) {
     if (p.spectate) continue;
@@ -733,6 +748,13 @@ const tickTimer = setInterval(() => {
             lobby.winTeam = "it";
           }
           break;
+        }
+      }
+      if (!lobby.winnerId && !lobby.winTeam && lobby.endsAt && now >= lobby.endsAt) {
+        const result = classicTimeWinner(all);
+        if (result) {
+          lobby.winnerId = result.winnerId;
+          lobby.winTeam = result.winTeam;
         }
       }
     }
@@ -1266,7 +1288,10 @@ module.exports = {
   cleanDifficulty,
   isTagTouch,
   classicTagTarget,
+  classicTimeWinner,
   freezeOutcome,
   RADIUS,
   DEFAULT_SETTINGS,
+  CLASSIC_DURATION_MS,
+  FREEZE_DURATION_MS,
 };

@@ -310,9 +310,14 @@ function renderGame(){
   const sorted=game.players.filter(p=>!p.spectate).slice().sort((a,b)=>(b.tags||0)-(a.tags||0));
   const mode = game.settings ? game.settings.gameMode : "classic";
   $("itLabel").textContent=it?("it: "+it.name+(it.id===myId?" (you)":"")):"";
-  if (mode === "freeze" && game.timeLeft != null && !game.winnerId && !game.winTeam) {
-    const s = Math.ceil(game.timeLeft / 1000);
-    $("scoreLabel").textContent = "runners " + Math.floor(s/60) + ":" + String(s%60).padStart(2,"0");
+  const fmtClock=(ms)=>{ const s=Math.ceil(ms/1000); return Math.floor(s/60)+":"+String(s%60).padStart(2,"0"); };
+  if (game.timeLeft != null && !game.winnerId && !game.winTeam) {
+    if (mode === "freeze") {
+      $("scoreLabel").textContent = "runners " + fmtClock(game.timeLeft);
+    } else {
+      const ttw=game.settings?game.settings.tagsToWin:10;
+      $("scoreLabel").textContent=(ttw>0?("first to "+ttw):"most tags")+" · "+fmtClock(game.timeLeft);
+    }
   } else {
     const ttw=game.settings?game.settings.tagsToWin:10;
     $("scoreLabel").textContent=ttw>0?("first to "+ttw):"endless";
@@ -391,6 +396,14 @@ function renderGame(){
     const detail = document.createElement("span");
     if (game.winTeam === "runners") {
       head.textContent = "Runners survive the timer.";
+      detail.textContent = " " +
+        (game.leaderId===myId ? "Press Play again or Back to lobby." : "Waiting for leader.");
+    } else if (game.winTeam === "draw") {
+      const scored = game.players.filter(p=>!p.spectate);
+      let best = 0;
+      for (const p of scored) best = Math.max(best, p.tags || 0);
+      const tied = scored.filter(p=>(p.tags||0)===best).map(p=>p.name).slice(0,3).join(", ");
+      head.textContent = "Draw — " + (tied || "nobody") + " tied at " + best + " tags.";
       detail.textContent = " " +
         (game.leaderId===myId ? "Press Play again or Back to lobby." : "Waiting for leader.");
     } else {

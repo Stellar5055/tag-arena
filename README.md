@@ -20,7 +20,7 @@ Solo: create a lobby, press Add bot, Ready up, then Start.
 
 ## Modes
 
-- Tag (classic): IT transfers on touch. First to tagsToWin wins.
+- Tag (classic): IT transfers on touch. First to tagsToWin wins, or most tags when the 3-minute timer ends (tie is a draw). Endless mode (tagsToWin 0) is decided by the timer alone.
 - Freeze tag: IT stays IT and freezes runners on touch. Frozen runners stop moving until a free teammate touches them. IT wins by freezing everyone or reaching tagsToWin. Runners win by surviving the 2-minute timer.
 
 ## Bots
