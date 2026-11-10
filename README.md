@@ -18,13 +18,15 @@ Solo: create a lobby, press Add bot, then Start.
 
 ## Bots
 
-Server bots with three styles, assigned in order chaser, runner, trickster:
+Server bots with three styles, assigned in order chaser, runner, trickster. Each bot also has Easy, Medium, or Hard difficulty picked at Add bot time. Hard is the old full-speed brain. Easy is slow, late, and never predicts. Medium is between.
+
+All bots dash too: Easy only bursts away at very close range every 5s, Medium chases and flees in a mid window every 4s, Hard uses the full chase and flee windows every 3s.
 
 - Chaser: predicts movement and cuts off near walls. Strong when IT, weaker when fleeing.
 - Runner: fast flee, pulls to center, strong separation so it does not stack with others.
 - Trickster: jukes sideways when IT is close, wanders more.
 
-All bots avoid walls instead of pushing into corners, spread from each other, get a short flee boost after being tagged, and freeze new IT for 350ms to break instant re-tag loops. If a bot barely moves for ~1s it picks a center escape waypoint.
+All bots steer with difficulty turn rates (easy turns slowly, hard snaps faster) and rethink on their difficulty clock: easy about 380-460ms, medium about 230-310ms, hard about 140-220ms. A bot that just became IT waits out its own reaction delay before chasing, instead of reacting instantly.
 
 Leader manages bots with Add bot (pick Easy, Medium, or Hard, max 3, counts toward max players) and Remove per bot in the player list, in waiting and during play.
 
@@ -32,7 +34,7 @@ Easy is slow, reacts late, never predicts or jukes, wanders a lot. Medium is in 
 
 ## Controls
 
-- Move: WASD or arrow keys. Touch: drag on arena.
+- Move: WASD or arrow keys. Touch: drag on arena. Dash: Space, Shift, or Dash button. 160ms burst at 3.1x speed, 3s cooldown. The arena footer shows a dash timer bar (green ready, red refilling, black while dashing) and the Dash button disables during cooldown.
 - Landing: name, color (8), shape (circle, square, triangle), trail (none, dots, line). Create with settings, or join by code.
 - Waiting: leader edits settings, starts. Anyone can edit their own look. Leader can kick and add or remove bots.
 - Game: YOU marker above your own character. Leader can end back to lobby.

@@ -83,20 +83,27 @@ function sendError(ws, msg) {
 }
 
 function publicPlayers(lobby) {
-  return [...lobby.players.values()].map((p) => ({
-    id: p.id,
-    name: p.name,
-    color: p.color,
-    shape: p.shape,
-    trail: p.trail,
-    x: Math.round(p.x),
-    y: Math.round(p.y),
-    it: p.it,
-    bot: !!p.bot,
-    kind: p.bot ? p.kind || "chaser" : undefined,
-    difficulty: p.bot ? p.difficulty || "hard" : undefined,
-    tags: p.tags || 0,
-  }));
+  const now = Date.now();
+  return [...lobby.players.values()].map((p) => {
+    const diff = p.bot ? BOT_DIFFS[p.difficulty] || BOT_DIFFS.hard : null;
+    return {
+      id: p.id,
+      name: p.name,
+      color: p.color,
+      shape: p.shape,
+      trail: p.trail,
+      x: Math.round(p.x),
+      y: Math.round(p.y),
+      it: p.it,
+      bot: !!p.bot,
+      kind: p.bot ? p.kind || "chaser" : undefined,
+      difficulty: p.bot ? p.difficulty || "hard" : undefined,
+      tags: p.tags || 0,
+      dashing: now < (p.dashUntil || 0),
+      dashMsLeft: Math.max(0, (p.dashCdUntil || 0) - now),
+      dashCdTotal: p.bot ? diff.dashCdMs || 3000 : HUMAN_DASH_CD_MS,
+    };
+  });
 }
 
 function broadcastLobby(lobby) {
@@ -134,11 +141,22 @@ const BOT_KINDS = {
 const BOT_ORDER = ["chaser", "runner", "trickster"];
 
 // easy < medium < hard (hard is the current behavior)
+// react = kind.reactMs + diff.reactAdd ; turn = how fast bots steer toward a new heading
 const BOT_DIFFS = {
-  easy: { chase: 0.7, flee: 0.7, reactAdd: 240, predictMult: 0, wanderMult: 2.2, boostMult: 1.0, frozenMs: 650, juke: false },
-  medium: { chase: 0.87, flee: 0.87, reactAdd: 90, predictMult: 0.5, wanderMult: 1.4, boostMult: 1.08, frozenMs: 400, juke: false },
-  hard: { chase: 1.0, flee: 1.0, reactAdd: 0, predictMult: 1.0, wanderMult: 1.0, boostMult: 1.18, frozenMs: 350, juke: true },
+  easy: { chase: 0.7, flee: 0.7, reactAdd: 240, predictMult: 0, wanderMult: 2.2, boostMult: 1.0, frozenMs: 650, juke: false, dashMult: 2.2, dashCdMs: 5200, dashChaseMin: 1e9, dashChaseMax: -1, dashFleeRange: 110, turnLerp: 0.12 },
+  medium: { chase: 0.87, flee: 0.87, reactAdd: 90, predictMult: 0.5, wanderMult: 1.4, boostMult: 1.08, frozenMs: 400, juke: false, dashMult: 2.8, dashCdMs: 4000, dashChaseMin: 150, dashChaseMax: 250, dashFleeRange: 140, turnLerp: 0.22 },
+  hard: { chase: 1.0, flee: 1.0, reactAdd: 0, predictMult: 1.0, wanderMult: 1.0, boostMult: 1.18, frozenMs: 350, juke: true, dashMult: 3.1, dashCdMs: 3000, dashChaseMin: 120, dashChaseMax: 280, dashFleeRange: 165, turnLerp: 0.38 },
 };
+
+function botReactMs(p) {
+  const kind = BOT_KINDS[p.kind] || BOT_KINDS.chaser;
+  const diff = BOT_DIFFS[p.difficulty] || BOT_DIFFS.hard;
+  return kind.reactMs + diff.reactAdd;
+}
+
+const DASH_TIME_MS = 160;
+const HUMAN_DASH_MULT = 3.1;
+const HUMAN_DASH_CD_MS = 3000;
 
 function cleanDifficulty(d) {
   const s = String(d || "hard").toLowerCase();
@@ -187,7 +205,28 @@ function makeBotPlayer(lobby, botsCount, difficulty) {
     waypointUntil: 0,
     waypointX: 0,
     waypointY: 0,
+    dashUntil: 0,
+    dashCdUntil: 0,
+    dashDx: 0,
+    dashDy: 0,
+    lastDx: 1,
+    lastDy: 0,
+    mdx: 1,
+    mdy: 0,
   };
+}
+
+function tryDash(p, dirX, dirY, now, cdMs) {
+  if (now < (p.dashCdUntil || 0) || now < (p.dashUntil || 0)) return false;
+  const len = Math.hypot(dirX, dirY);
+  if (!(len > 0.01)) return false;
+  p.dashDx = dirX / len;
+  p.dashDy = dirY / len;
+  p.lastDx = p.dashDx;
+  p.lastDy = p.dashDy;
+  p.dashUntil = now + DASH_TIME_MS;
+  p.dashCdUntil = now + cdMs;
+  return true;
 }
 
 function estimateVelocities(lobby, dt) {
@@ -230,7 +269,7 @@ function thinkBot(p, lobby, now) {
   const it = all.find((q) => q.it);
 
   if (now < p.thinkAt) return;
-  p.thinkAt = now + kind.reactMs + diff.reactAdd + Math.random() * 80;
+  p.thinkAt = now + botReactMs(p) + Math.random() * 80;
 
   // forced waypoint (anti-camp escape) takes priority briefly
   if (now < p.waypointUntil) {
@@ -270,6 +309,18 @@ function thinkBot(p, lobby, now) {
     py += Math.cos(now / 900 + p.wobble * 1.7) * wanderAmt;
     p.tx = px;
     p.ty = py;
+    // chase dash: close the gap when in range (range + cooldown differ by difficulty)
+    const chaseD = Math.hypot(best.x - p.x, best.y - p.y);
+    if (chaseD >= (diff.dashChaseMin ?? 120) && chaseD <= (diff.dashChaseMax ?? 280)) {
+      const dx = px - p.x;
+      const dy = py - p.y;
+      // require rough alignment with current heading to avoid wild sideways dashes
+      const hx = p.tx - p.x;
+      const hy = p.ty - p.y;
+      if (Math.hypot(hx, hy) > 1) {
+        tryDash(p, dx, dy, now, diff.dashCdMs || 3000);
+      }
+    }
   } else if (it) {
     const dx = p.x - it.x;
     const dy = p.y - it.y;
@@ -321,6 +372,10 @@ function thinkBot(p, lobby, now) {
     const reach = 170;
     p.tx = p.x + (dirX / len) * reach;
     p.ty = p.y + (dirY / len) * reach;
+    // flee dash: burst away when IT gets close (range + cooldown differ by difficulty)
+    if (d <= (diff.dashFleeRange || 165)) {
+      tryDash(p, dirX, dirY, now, diff.dashCdMs || 3000);
+    }
   }
 }
 
@@ -328,17 +383,33 @@ function moveBot(p, lobby, dt, now, baseSpeed) {
   const kind = BOT_KINDS[p.kind] || BOT_KINDS.chaser;
   const diff = BOT_DIFFS[p.difficulty] || BOT_DIFFS.hard;
   if (now < p.frozenUntil) return;
+  const { w, h } = arenaSize(lobby);
+  const m = RADIUS + 2;
+  if (now < (p.dashUntil || 0)) {
+    const dashMult = (diff.dashMult || 3.1) * (p.it ? kind.chase : kind.flee);
+    p.x += (p.dashDx || 1) * baseSpeed * dashMult * dt;
+    p.y += (p.dashDy || 0) * baseSpeed * dashMult * dt;
+    p.x = Math.max(m, Math.min(w - m, p.x));
+    p.y = Math.max(m, Math.min(h - m, p.y));
+    return;
+  }
   let mult = p.it ? 0.95 * kind.chase * diff.chase : 0.88 * kind.flee * diff.flee;
   if (!p.it && now < p.fleeBoostUntil) mult *= diff.boostMult;
   const dx = p.tx - p.x;
   const dy = p.ty - p.y;
   const d = Math.hypot(dx, dy);
   if (d < 3) return;
+  // turn smoothing: easy bots steer slowly toward a new heading, hard bots snap faster.
+  // this is the visible reaction lag when a target jukes or dashes.
+  const turn = diff.turnLerp ?? 0.25;
+  const wantX = dx / d;
+  const wantY = dy / d;
+  p.mdx = (p.mdx ?? wantX) + (wantX - (p.mdx ?? wantX)) * turn;
+  p.mdy = (p.mdy ?? wantY) + (wantY - (p.mdy ?? wantY)) * turn;
+  const ml = Math.hypot(p.mdx, p.mdy) || 1;
   const step = Math.min(baseSpeed * mult * dt, d);
-  p.x += (dx / d) * step;
-  p.y += (dy / d) * step;
-  const { w, h } = arenaSize(lobby);
-  const m = RADIUS + 2;
+  p.x += (p.mdx / ml) * step;
+  p.y += (p.mdy / ml) * step;
   p.x = Math.max(m, Math.min(w - m, p.x));
   p.y = Math.max(m, Math.min(h - m, p.y));
 
@@ -400,10 +471,18 @@ function resetForStart(lobby) {
     p.it = false;
     p.keys = {};
     p.moveVec = null;
+    p.dashUntil = 0;
+    p.dashCdUntil = 0;
+    p.dashDx = 0;
+    p.dashDy = 0;
+    p.lastDx = 1;
+    p.lastDy = 0;
     if (p.bot) {
-      p.thinkAt = 0;
+      p.thinkAt = now + botReactMs(p) + Math.random() * 150;
       p.tx = pos.x;
       p.ty = pos.y;
+      p.mdx = 1;
+      p.mdy = 0;
       p.stuckMs = 0;
       p.lastCheckX = pos.x;
       p.lastCheckY = pos.y;
@@ -431,21 +510,31 @@ setInterval(() => {
 
     for (const p of lobby.players.values()) {
       if (p.bot) continue;
-      let dx = 0,
-        dy = 0;
-      const k = p.keys || {};
-      if (k.up) dy -= 1;
-      if (k.down) dy += 1;
-      if (k.left) dx -= 1;
-      if (k.right) dx += 1;
-      if (dx !== 0 || dy !== 0) {
-        const len = Math.hypot(dx, dy);
-        p.x += (dx / len) * speed * dt;
-        p.y += (dy / len) * speed * dt;
-      }
-      if (p.moveVec) {
-        p.x += p.moveVec.x * speed * dt;
-        p.y += p.moveVec.y * speed * dt;
+      if (now < (p.frozenUntil || 0)) continue;
+      if (now < (p.dashUntil || 0)) {
+        p.x += (p.dashDx || 1) * speed * HUMAN_DASH_MULT * dt;
+        p.y += (p.dashDy || 0) * speed * HUMAN_DASH_MULT * dt;
+      } else {
+        let dx = 0,
+          dy = 0;
+        const k = p.keys || {};
+        if (k.up) dy -= 1;
+        if (k.down) dy += 1;
+        if (k.left) dx -= 1;
+        if (k.right) dx += 1;
+        if (p.moveVec) {
+          dx += p.moveVec.x;
+          dy += p.moveVec.y;
+        }
+        if (dx !== 0 || dy !== 0) {
+          const len = Math.hypot(dx, dy);
+          const nx = dx / len;
+          const ny = dy / len;
+          p.lastDx = nx;
+          p.lastDy = ny;
+          p.x += nx * speed * dt;
+          p.y += ny * speed * dt;
+        }
       }
       p.x = Math.max(RADIUS, Math.min(w - RADIUS, p.x));
       p.y = Math.max(RADIUS, Math.min(h - RADIUS, p.y));
@@ -474,7 +563,10 @@ setInterval(() => {
           const qDiff = q.bot ? BOT_DIFFS[q.difficulty] || BOT_DIFFS.hard : null;
           q.frozenUntil = now + (qDiff ? qDiff.frozenMs : 350);
           if (q.bot) {
-            q.thinkAt = 0;
+            // new IT does not react instantly: wait out its difficulty delay
+            q.thinkAt = now + botReactMs(q) + Math.random() * 60;
+            q.mdx = q.lastDx || 1;
+            q.mdy = q.lastDy || 0;
           }
           lobby.tagCooldownUntil = now + lobby.settings.cooldownMs;
           if (lobby.settings.tagsToWin > 0 && itPlayer.tags >= lobby.settings.tagsToWin) {
@@ -554,12 +646,22 @@ wss.on("connection", (socket) => {
         trail: look.trail,
         x: pos.x,
         y: pos.y,
+        vx: 0,
+        vy: 0,
+        lastX: pos.x,
+        lastY: pos.y,
         keys: {},
         moveVec: null,
         it: false,
         bot: false,
         tags: 0,
         wobble: Math.random() * 10,
+        dashUntil: 0,
+        dashCdUntil: 0,
+        dashDx: 0,
+        dashDy: 0,
+        lastDx: 1,
+        lastDy: 0,
       });
       lobby.leaderId = id;
       lobby.sockets.set(id, socket);
@@ -606,12 +708,22 @@ wss.on("connection", (socket) => {
           trail: look.trail,
           x: 0,
           y: 0,
+          vx: 0,
+          vy: 0,
+          lastX: 0,
+          lastY: 0,
           keys: {},
           moveVec: null,
           it: false,
           bot: false,
           tags: 0,
           wobble: Math.random() * 10,
+          dashUntil: 0,
+          dashCdUntil: 0,
+          dashDx: 0,
+          dashDy: 0,
+          lastDx: 1,
+          lastDy: 0,
         });
         lobby.sockets.set(id, socket);
       }
@@ -757,7 +869,9 @@ wss.on("connection", (socket) => {
       const lobby = lobbies.get(ctx.code);
       if (!lobby || lobby.state !== "playing" || lobby.winnerId) return;
       const p = lobby.players.get(ctx.playerId);
-      if (!p) return;
+      if (!p || p.bot) return;
+      const now = Date.now();
+      if (now < (p.frozenUntil || 0)) return;
       p.keys = {
         up: !!msg.keys?.up,
         down: !!msg.keys?.down,
@@ -768,6 +882,24 @@ wss.on("connection", (socket) => {
         p.moveVec = msg.moveVec;
       } else if (!msg.moveVec) {
         p.moveVec = null;
+      }
+      if (msg.dash) {
+        let dx = 0,
+          dy = 0;
+        const k = p.keys;
+        if (k.up) dy -= 1;
+        if (k.down) dy += 1;
+        if (k.left) dx -= 1;
+        if (k.right) dx += 1;
+        if (p.moveVec) {
+          dx += p.moveVec.x;
+          dy += p.moveVec.y;
+        }
+        if (dx === 0 && dy === 0) {
+          dx = p.lastDx || 1;
+          dy = p.lastDy || 0;
+        }
+        tryDash(p, dx, dy, now, HUMAN_DASH_CD_MS);
       }
     }
   });
