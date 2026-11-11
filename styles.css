@@ -25,6 +25,21 @@
   .dot.on { background: #2f9e44; } .dot.off { background: var(--accent); }
 
   .wrap { max-width: 1080px; margin: 0 auto; padding: 18px; }
+  /* Screen switching is class-driven (not inline styles) so it keeps
+     working under a strict Content-Security-Policy, which ignores
+     static style="..." attributes. All screens start hidden; JS adds
+     .active to exactly one. Stylesheet hiding also avoids a flash of
+     the waiting/game screens before client.js loads. */
+  .screen { display: none; }
+  .screen.active { display: block; }
+  .top-actions { display: flex; gap: 8px; }
+  .invite-row { display: flex; gap: 8px; }
+  .side-grid { display: grid; gap: 14px; }
+  .gap-b { margin-bottom: 16px; }
+  .push-top { margin-top: 10px; }
+  .flush { margin: 0; }
+  #lockHint { margin-top: 0; }
+  #invite { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
   .layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; }
   @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }

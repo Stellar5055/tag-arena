@@ -14,7 +14,7 @@
       <div><h1>Tag Arena</h1><small id="roomLabel">lobby select</small></div>
     </div>
     <div class="conn"><span id="connDot" class="dot"></span><span id="connText">connecting</span></div>
-    <div style="display:flex;gap:8px">
+    <div class="top-actions">
       <button id="soundBtn" title="Toggle sound">Sound on</button>
       <button id="motionBtn" title="Toggle trails">Trails on</button>
     </div>
@@ -24,8 +24,8 @@
 <div id="error"></div>
 
 <!-- LANDING -->
-<div id="screen-landing" class="wrap">
-  <div class="card" style="margin-bottom:16px">
+<div id="screen-landing" class="wrap screen active">
+  <div class="card gap-b">
     <h2>Your runner</h2>
     <div class="body">
       <label class="small" for="name">Display name</label>
@@ -86,19 +86,19 @@
 </div>
 
 <!-- WAITING -->
-<div id="screen-waiting" class="wrap" style="display:none">
+<div id="screen-waiting" class="wrap screen">
   <div class="layout">
     <div>
-      <div class="card" style="margin-bottom:16px">
+      <div class="card gap-b">
         <h2>Waiting room</h2>
         <div class="body">
           <div class="code-big" id="wcode">----</div>
-          <div style="display:flex;gap:8px">
-            <input id="invite" type="text" readonly style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px" />
+          <div class="invite-row">
+            <input id="invite" type="text" readonly />
             <button id="copy">Copy</button>
           </div>
           <p class="hint" id="whint">Share the code or link. Leader presses Start when everyone is in.</p>
-          <div class="btn-row" style="margin-top:10px">
+          <div class="btn-row push-top">
             <button id="readyBtn">Ready up</button>
             <button id="start" class="primary">Start game</button>
             <button id="wleave">Leave</button>
@@ -109,13 +109,13 @@
         <h2>Players</h2>
         <div class="body">
           <ul id="wplayers"></ul>
-          <label class="small" style="margin-top:10px">Bot difficulty</label>
+          <label class="small push-top">Bot difficulty</label>
           <div class="btn-row"><select id="wbotdiff"><option value="easy">Easy</option><option value="medium">Medium</option><option value="hard" selected>Hard</option></select><button id="wbot">Add bot</button></div>
         </div>
       </div>
     </div>
     <div>
-      <div class="card" style="margin-bottom:16px">
+      <div class="card gap-b">
         <h2>Your look</h2>
         <div class="body">
           <label class="small" for="wname">Name</label>
@@ -131,7 +131,7 @@
       <div class="card">
         <h2>Lobby settings</h2>
         <div class="body">
-          <p class="hint" id="lockHint" style="margin-top:0">Only the leader can edit.</p>
+          <p class="hint" id="lockHint">Only the leader can edit.</p>
           <label class="small">Max players</label><select id="w-max"><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option></select>
           <label class="small">Tags to win</label><select id="w-win"><option value="3">3</option><option value="5">5</option><option value="10">10</option><option value="20">20</option><option value="0">Endless</option></select>
           <label class="small">Speed</label><select id="w-speed"><option value="200">Slow</option><option value="260">Normal</option><option value="320">Fast</option></select>
@@ -149,7 +149,7 @@
 </div>
 
 <!-- GAME -->
-<div id="screen-game" class="wrap" style="display:none">
+<div id="screen-game" class="wrap screen">
   <div class="layout">
     <div class="arena-card">
       <div class="arena-head"><strong id="gtitle">Arena</strong><span id="countLabel">0 players</span></div>
@@ -158,11 +158,11 @@
       <div class="canvas-wrap"><canvas id="game" width="800" height="600"></canvas></div>
       <div class="arena-foot"><span id="itLabel"></span><span class="dash-wrap"><span id="dashHud">dash ready</span><span id="dashBarWrap"><span id="dashBar"></span></span></span><span id="scoreLabel"></span></div>
     </div>
-    <div class="side" style="display:grid;gap:14px">
+    <div class="side-grid">
       <div class="card"><h2>Players</h2><div class="body"><ul id="players"></ul></div></div>
       <div class="card"><h2>Lobby</h2><div class="body">
         <div class="btn-stack">
-          <label class="small" style="margin:0">Bot difficulty</label>
+          <label class="small flush">Bot difficulty</label>
           <div class="btn-row"><select id="gbotdiff"><option value="easy">Easy</option><option value="medium">Medium</option><option value="hard" selected>Hard</option></select><button id="gaddbot">Add bot</button></div>
           <button id="dashBtn" class="primary">Dash (space)</button>
           <button id="gend">End game (leader)</button>

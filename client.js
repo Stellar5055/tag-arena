@@ -44,9 +44,12 @@ function setConn(on, text) {
 }
 function show(which) {
   screen = which;
-  $("screen-landing").style.display = which==="landing" ? "" : "none";
-  $("screen-waiting").style.display = which==="waiting" ? "" : "none";
-  $("screen-game").style.display = which==="game" ? "" : "none";
+  // Class-driven (see .screen/.screen.active in styles.css): inline
+  // style="display" is ignored under a strict style-src CSP, so toggling
+  // classes is the only robust switcher. classList is script-set, CSP-fine.
+  $("screen-landing").classList.toggle("active", which==="landing");
+  $("screen-waiting").classList.toggle("active", which==="waiting");
+  $("screen-game").classList.toggle("active", which==="game");
   if (which==="landing") $("roomLabel").textContent = "lobby select";
 }
 
@@ -61,6 +64,8 @@ function resetRoundUiState() {
   for (const k of Object.keys(lastDashingMap)) delete lastDashingMap[k];
   renderPos = {};
   trailHist = {};
+  lastRosterSig = "";
+  lastBoardSig = "";
 }
 
 function connect() {
@@ -281,6 +286,11 @@ function renderWaiting(){
 const keys={};
 let pendingDash=false;
 let lastMyTags=0, lastWinnerSeen=false;
+// Roster/board rebuild guards: renderGame runs at 30Hz, but rebuilding the
+// player list DOM on every tick destroys remove buttons mid-click (mousedown
+// lands, innerHTML wipes it, mouseup lands nowhere -> click never fires).
+// Rebuild only when the visible content actually changes.
+let lastRosterSig="", lastBoardSig="";
 const lastDashingMap={};
 let dragStartXY=null;
 addEventListener("keydown",(e)=>{
@@ -313,6 +323,12 @@ addEventListener("pointerup",()=>{dragging=false;dragVec=null;dragStartXY=null;}
 $("dashBtn").onclick=()=>{ pendingDash=true; };
 $("soundBtn").onclick=()=>{ soundOn=!soundOn; sessionStorage.setItem("tag-sound",soundOn?"on":"off"); syncPrefButtons(); };
 $("motionBtn").onclick=()=>{ trailsOn=!trailsOn; sessionStorage.setItem("tag-trails",trailsOn?"on":"off"); syncPrefButtons(); };
+// Delegated: the #players roster is rebuilt on change, so per-button onclick
+// handlers would die with the old DOM. One persistent listener survives.
+$("players").addEventListener("click",(e)=>{
+  const b=e.target && e.target.closest ? e.target.closest("[data-remove-bot]") : null;
+  if(b && b.getAttribute("data-remove-bot")) send({t:"removeBot",targetId:b.getAttribute("data-remove-bot")});
+});
 setInterval(()=>{ if(screen==="game") { send({t:"input",keys,moveVec:dragVec,dash:pendingDash||undefined}); pendingDash=false; } },50);
 
 function renderGame(){
@@ -439,6 +455,13 @@ function renderGame(){
     wt.append(head, detail);
     // Final standings, textContent-built so names cannot inject markup.
     // Styled like the player lists: rank + swatch + shape + name + tags + badges.
+    // Gated on a signature: state arrives at 30Hz but standings are static
+    // once the winner is set, so skip the rebuild when nothing changed.
+    const boardSig = (game.winTeam || "") + "|" + (game.winnerId || "") + "|" +
+      sorted.map(p=>[p.id,p.tags,p.bot,p.difficulty,p.color,p.shape,p.name].join(":")).join("|") +
+      "|" + game.leaderId + "|" + myId;
+    if (boardSig !== lastBoardSig) {
+      lastBoardSig = boardSig;
     const board = $("winBoard");
     board.textContent = "";
     let topTags = 0;
@@ -483,6 +506,7 @@ function renderGame(){
       }
       board.appendChild(li);
     });
+    }
     $("again").style.display = game.leaderId===myId ? "" : "none";
     $("tobby").style.display = game.leaderId===myId ? "" : "none";
     bn.textContent="Game over."; bn.className="";
@@ -495,6 +519,15 @@ function renderGame(){
     else if(me.id===(it&&it.id)){bn.textContent="You are IT — go tag someone.";bn.className="is-it";}
     else if(it){bn.textContent=it.name+" is IT — keep your distance.";bn.className="safe";}
   }
+  // Throttled for the same reason as the board: rebuilding at 30Hz makes
+  // the per-bot remove buttons unclickable (element replaced mid-click).
+  // Clicks are handled by a single delegated listener on #players below,
+  // so buttons keep working even across rebuilds.
+  const rosterSig = sorted.map(p=>[p.id,p.tags,p.it,p.frozen,p.idle,p.spectate,p.ready,p.color,p.shape,p.difficulty,p.bot,p.name].join(":")).join("|") +
+    "|" + game.players.filter(p=>p.spectate).map(p=>p.id+":"+p.name).join("|") +
+    "|" + game.leaderId + "|" + myId;
+  if (rosterSig !== lastRosterSig) {
+    lastRosterSig = rosterSig;
   const ul=$("players"); ul.innerHTML="";
   const isLeadGame = game.leaderId===myId;
   sorted.forEach(p=>{
@@ -509,7 +542,7 @@ function renderGame(){
     if(p.idle){const b=document.createElement("span");b.className="badge";b.textContent="idle";li.appendChild(b);}
     if (isLeadGame && p.bot) {
       const k=document.createElement("button");k.className="kick";k.textContent="remove";
-      k.onclick=()=>send({t:"removeBot",targetId:p.id});li.appendChild(k);
+      k.setAttribute("data-remove-bot", p.id);li.appendChild(k);
     }
     ul.appendChild(li);
   });
@@ -518,6 +551,7 @@ function renderGame(){
     const li=document.createElement("li"); li.className="spec-note";
     li.textContent = "Watching: " + specs.map(p=>p.name).join(", ");
     ul.appendChild(li);
+  }
   }
   $("gend").disabled = !(game.leaderId===myId);
   history.replaceState(null,"","?lobby="+game.code);
@@ -615,6 +649,7 @@ function draw(){
 
 // init
 (function init(){
+  show("landing");
   const q=new URLSearchParams(location.search).get("lobby");
   if(q) $("code").value=q.toUpperCase();
   buildPickers();
