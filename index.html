@@ -14,14 +14,10 @@
       <div><h1>Tag Arena</h1><small id="roomLabel">lobby select</small></div>
     </div>
     <div class="conn"><span id="connDot" class="dot"></span><span id="connText">connecting</span></div>
-    <div class="top-actions">
-      <button id="soundBtn" title="Toggle sound">Sound on</button>
-      <button id="motionBtn" title="Toggle trails">Trails on</button>
-    </div>
   </div>
 </div>
 
-<div id="error"></div>
+<div id="error" role="status"></div>
 
 <!-- LANDING -->
 <div id="screen-landing" class="wrap screen active">
@@ -29,57 +25,58 @@
     <h2>Your runner</h2>
     <div class="body">
       <label class="small" for="name">Display name</label>
-      <input id="name" type="text" maxlength="16" autocomplete="off" />
+      <input id="name" type="text" maxlength="16" autocomplete="off" placeholder="Pick a name" />
       <label class="small">Color</label>
       <div class="swatches" id="colors"></div>
-      <div class="row2">
-        <div>
-          <label class="small">Shape</label>
-          <div class="opt-row" id="shapes"></div>
+      <details class="gap-top">
+        <summary>Look details</summary>
+        <div class="row2">
+          <div>
+            <label class="small">Shape</label>
+            <div class="opt-row" id="shapes"></div>
+          </div>
+          <div>
+            <label class="small">Trail</label>
+            <div class="opt-row" id="trails"></div>
+          </div>
         </div>
-        <div>
-          <label class="small">Trail</label>
-          <div class="opt-row" id="trails"></div>
-        </div>
-      </div>
+      </details>
     </div>
   </div>
   <div class="grid2">
-    <div class="card">
-      <h2>Create lobby — you lead</h2>
-      <div class="body">
-        <div class="row2">
-          <div><label class="small">Max players</label><select id="s-max"><option>2</option><option>3</option><option>4</option><option>5</option><option selected>6</option><option>7</option><option>8</option></select></div>
-          <div id="s-winrow"><label class="small">Points to win</label><select id="s-win"><option value="750">750</option><option value="1500" selected>1500</option><option value="3000">3000</option><option value="0">Timed only</option></select></div>
-        </div>
-        <div class="row2">
-          <div><label class="small">Speed</label><select id="s-speed"><option value="200">Slow</option><option value="260" selected>Normal</option><option value="320">Fast</option></select></div>
-          <div><label class="small">Tag cooldown</label><select id="s-cool"><option value="500">0.5s</option><option value="1000" selected>1s</option><option value="2000">2s</option></select></div>
-        </div>
-        <label class="small">Arena</label>
-        <select id="s-arena"><option value="small">Small 640x480</option><option value="classic" selected>Classic 800x600</option><option value="large">Large 960x720</option></select>
-        <div class="row2">
-          <div><label class="small">Dash recharge</label><select id="s-dash"><option value="0">Off</option><option value="3000" selected>3s</option><option value="5000">5s</option></select></div>
-          <div><label class="small">Mode</label><select id="s-mode"><option value="classic" selected>Tag</option><option value="freeze">Freeze tag</option></select></div>
-        </div>
-        <label class="small">Bots</label>
-        <select id="s-bots"><option value="on" selected>Allowed</option><option value="off">Off</option></select>
-        <div class="btn-stack"><button id="create" class="primary">Create lobby</button></div>
-        <p class="hint">You become leader. You can change all of this later in the waiting room.</p>
-      </div>
-    </div>
     <div class="card">
       <h2>Join lobby</h2>
       <div class="body">
         <label class="small" for="code">Lobby code</label>
         <input id="code" class="code" type="text" maxlength="8" autocomplete="off" placeholder="AB12" />
         <div class="btn-stack"><button id="join" class="primary">Join</button></div>
-        <p class="hint">Ask the leader for the lobby code, or open their invite link. Each browser tab counts as one player, so open a second tab to test solo.</p>
-        <ol class="steps">
-          <li>Set your name and look above.</li>
-          <li>Create a lobby or join with a code.</li>
-          <li>Press Space to dash. Most points when the 3-minute timer ends wins — you gain points free, bleed them as IT.</li>
-        </ol>
+        <p class="hint">Got an invite link? Just open it. Otherwise pick a name, join a code, and don't be IT when the timer ends.</p>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Create lobby — you lead</h2>
+      <div class="body">
+        <div class="btn-stack"><button id="create">Create lobby</button></div>
+        <details class="gap-top">
+          <summary>Advanced settings</summary>
+          <div class="row2">
+            <div><label class="small">Max players</label><select id="s-max"><option>2</option><option>3</option><option>4</option><option>5</option><option selected>6</option><option>7</option><option>8</option></select></div>
+            <div id="s-winrow"><label class="small">Points to win</label><select id="s-win"><option value="750">750</option><option value="1500" selected>1500</option><option value="3000">3000</option><option value="0">Timed only</option></select></div>
+          </div>
+          <div class="row2">
+            <div><label class="small">Speed</label><select id="s-speed"><option value="200">Slow</option><option value="260" selected>Normal</option><option value="320">Fast</option></select></div>
+            <div><label class="small">Tag cooldown</label><select id="s-cool"><option value="500">0.5s</option><option value="1000" selected>1s</option><option value="2000">2s</option></select></div>
+          </div>
+          <label class="small">Arena</label>
+          <select id="s-arena"><option value="small">Small 640x480</option><option value="classic" selected>Classic 800x600</option><option value="large">Large 960x720</option></select>
+          <div class="row2">
+            <div><label class="small">Dash recharge</label><select id="s-dash"><option value="0">Off</option><option value="3000" selected>3s</option><option value="5000">5s</option></select></div>
+            <div><label class="small">Mode</label><select id="s-mode"><option value="classic" selected>Tag</option><option value="freeze">Freeze tag</option></select></div>
+          </div>
+          <label class="small">Bots</label>
+          <select id="s-bots"><option value="on" selected>Allowed</option><option value="off">Off</option></select>
+        </details>
+        <p class="hint">You become leader. You can change all of this later in the waiting room.</p>
       </div>
     </div>
   </div>
@@ -93,10 +90,7 @@
         <h2>Waiting room</h2>
         <div class="body">
           <div class="code-big" id="wcode">----</div>
-          <div class="invite-row">
-            <input id="invite" type="text" readonly />
-            <button id="copy">Copy</button>
-          </div>
+          <div class="btn-stack"><button id="copy">Copy invite link</button></div>
           <p class="hint" id="whint">Share the code or link. Leader presses Start when everyone is in.</p>
           <div class="btn-row push-top">
             <button id="readyBtn">Ready up</button>
@@ -109,26 +103,30 @@
         <h2>Players</h2>
         <div class="body">
           <ul id="wplayers"></ul>
-          <label class="small push-top">Bot difficulty</label>
-          <div class="btn-row"><select id="wbotdiff"><option value="easy">Easy</option><option value="medium">Medium</option><option value="hard" selected>Hard</option></select><button id="wbot">Add bot</button></div>
+          <div id="wbotrow">
+            <label class="small push-top">Bot difficulty</label>
+            <div class="btn-row"><select id="wbotdiff"><option value="easy">Easy</option><option value="medium">Medium</option><option value="hard" selected>Hard</option></select><button id="wbot">Add bot</button></div>
+          </div>
         </div>
       </div>
     </div>
     <div>
       <div class="card gap-b">
-        <h2>Your look</h2>
-        <div class="body">
-          <label class="small" for="wname">Name</label>
-          <input id="wname" type="text" maxlength="16" />
-          <label class="small">Color</label>
-          <div class="swatches" id="wcolors"></div>
-          <label class="small">Shape</label>
-          <div class="opt-row" id="wshapes"></div>
-          <label class="small">Trail</label>
-          <div class="opt-row" id="wtrails"></div>
-        </div>
+        <details>
+          <summary class="card-summary as-h2">Change your look</summary>
+          <div class="body">
+            <label class="small" for="wname">Name</label>
+            <input id="wname" type="text" maxlength="16" />
+            <label class="small">Color</label>
+            <div class="swatches" id="wcolors"></div>
+            <label class="small">Shape</label>
+            <div class="opt-row" id="wshapes"></div>
+            <label class="small">Trail</label>
+            <div class="opt-row" id="wtrails"></div>
+          </div>
+        </details>
       </div>
-      <div class="card">
+      <div class="card" id="wsettingsCard">
         <h2>Lobby settings</h2>
         <div class="body">
           <p class="hint" id="lockHint">Only the leader can edit.</p>
@@ -144,6 +142,7 @@
           <label class="small">Bots</label><select id="w-bots"><option value="on">Allowed</option><option value="off">Off</option></select>
         </div>
       </div>
+      <p class="hint" id="wsettingsSummary"></p>
     </div>
   </div>
 </div>
@@ -152,29 +151,37 @@
 <div id="screen-game" class="wrap screen">
   <div class="layout">
     <div class="arena-card">
-      <div class="arena-head"><strong id="gtitle">Arena</strong><span id="countLabel">0 players</span></div>
-      <p id="banner">Playing</p>
-      <div id="winner"><span id="winnerText"></span><ol id="winBoard"></ol><div class="btn-row"><button id="again">Play again</button><button id="tobby">Back to lobby</button></div></div>
-      <div class="canvas-wrap"><canvas id="game" width="800" height="600"></canvas></div>
-      <div class="arena-foot"><span id="itLabel"></span><span class="dash-wrap"><span id="dashHud">dash ready</span><span id="dashBarWrap"><span id="dashBar"></span></span></span><span id="scoreLabel"></span></div>
+      <div class="arena-head"><strong id="gtitle">Arena</strong><span id="clockLabel">--:--</span></div>
+      <div class="canvas-wrap">
+        <canvas id="game" width="800" height="600"></canvas>
+        <p id="banner">Playing</p>
+        <div id="winner"><div class="win-panel"><span id="winnerText"></span><ol id="winBoard"></ol><div class="btn-row"><button id="again">Play again</button><button id="tobby">Back to lobby</button></div></div></div>
+      </div>
+      <div class="arena-foot"><span id="itLabel" class="pill"></span><span class="dash-wrap"><span id="dashPips"></span><span id="dashHud">dash ready</span></span><span id="scoreLabel"></span></div>
     </div>
     <div class="side-grid">
       <div class="card"><h2>Players</h2><div class="body"><ul id="players"></ul></div></div>
-      <div class="card"><h2>Lobby</h2><div class="body">
+      <div class="card"><div class="body">
         <div class="btn-stack">
-          <label class="small flush">Bot difficulty</label>
-          <div class="btn-row"><select id="gbotdiff"><option value="easy">Easy</option><option value="medium">Medium</option><option value="hard" selected>Hard</option></select><button id="gaddbot">Add bot</button></div>
           <button id="dashBtn" class="primary">Dash (space)</button>
-          <button id="gend">End game (leader)</button>
-          <button id="gleave">Leave lobby</button>
+          <details>
+            <summary class="card-summary">Lobby</summary>
+            <div class="btn-stack">
+              <div id="gbotrow">
+                <label class="small flush">Bot difficulty</label>
+                <div class="btn-row"><select id="gbotdiff"><option value="easy">Easy</option><option value="medium">Medium</option><option value="hard" selected>Hard</option></select><button id="gaddbot">Add bot</button></div>
+              </div>
+              <button id="gend">End game (leader)</button>
+              <button id="gleave">Leave lobby</button>
+            </div>
+          </details>
         </div>
-        <p class="hint"><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> or arrows. <kbd>Space</kbd> to dash. Drag on touch.</p>
       </div></div>
     </div>
   </div>
 </div>
 
-<p class="foot">Node + ws, server authoritative at 30hz. You must create or join a lobby — no quick play.</p>
+<div class="foot"><span>Tag Arena — run, dodge, don't be IT.</span><span class="top-actions"><button id="soundBtn" title="Toggle sound" aria-pressed="true">Sound on</button><button id="motionBtn" title="Toggle trails" aria-pressed="true">Trails on</button></span></div>
 
 <script src="/client.js" defer></script>
 </body>

@@ -201,7 +201,9 @@ let soundOn = (sessionStorage.getItem("tag-sound") || "on") === "on";
 let trailsOn = (sessionStorage.getItem("tag-trails") || "on") === "on";
 function syncPrefButtons(){
   $("soundBtn").textContent = soundOn ? "Sound on" : "Sound off";
+  $("soundBtn").setAttribute("aria-pressed", soundOn ? "true" : "false");
   $("motionBtn").textContent = trailsOn ? "Trails on" : "Trails off";
+  $("motionBtn").setAttribute("aria-pressed", trailsOn ? "true" : "false");
 }
 let audioCtx = null;
 function beep(freq, durMs, vol) {
@@ -219,24 +221,30 @@ function beep(freq, durMs, vol) {
   } catch {}
 }
 $("copy").onclick = async ()=>{
-  try { await navigator.clipboard.writeText($("invite").value); $("copy").textContent="Copied"; setTimeout(()=>$("copy").textContent="Copy",1200); }
-  catch { $("invite").select(); document.execCommand("copy"); }
+  if (!lobby) return;
+  const url = location.origin + location.pathname + "?lobby=" + lobby.code;
+  try { await navigator.clipboard.writeText(url); $("copy").textContent="Copied!"; setTimeout(()=>{ try { $("copy").textContent="Copy invite link"; } catch {} },1200); }
+  catch { showError("Copy this link: " + url); }
 };
+errBox.addEventListener("click", ()=>{ errBox.classList.remove("show"); clearTimeout(errTimer); });
 
-// waiting render
+// waiting render: keep IT/you/watching as badges; lead/ready/idle/difficulty
+// are demoted to quiet text so rows stay scannable.
 function playerRow(p, isLead, canKick){
   const li=document.createElement("li");
   const sw=document.createElement("span"); sw.className="swatch"; sw.style.background=p.color;
   const sh=document.createElement("span"); sh.className="shape-ico"; sh.textContent=p.shape==="circle"?"O":p.shape==="square"?"S":"T";
-  const nm=document.createElement("span"); nm.className="pname"; nm.textContent=p.bot?(p.name+" ("+(p.difficulty||"hard")+ ")"):p.name;
+  const nm=document.createElement("span"); nm.className="pname"; nm.textContent=p.name;
   li.append(sw,sh,nm);
+  if (p.bot) {
+    const df=document.createElement("span"); df.className="tags"; df.textContent=p.difficulty||"bot"; li.appendChild(df);
+  }
   const tg=document.createElement("span"); tg.className="tags"; tg.textContent=(p.tags||0)+" tags"; li.appendChild(tg);
-  if (p.it){ const b=document.createElement("span"); b.className="badge it"; b.textContent="IT"; li.appendChild(b); }
-  if (p.id===lobby.leaderId){ const b=document.createElement("span"); b.className="badge lead"; b.textContent="lead"; li.appendChild(b); }
+  if (p.id===lobby.leaderId){ const t=document.createElement("span"); t.className="tags"; t.textContent="· lead"; li.appendChild(t); }
   if (p.id===myId){ const b=document.createElement("span"); b.className="badge you"; b.textContent="you"; li.appendChild(b); }
   if (p.spectate){ const b=document.createElement("span"); b.className="badge"; b.textContent="watching"; li.appendChild(b); }
-  if (!p.bot && !p.spectate && p.ready){ const b=document.createElement("span"); b.className="badge"; b.textContent="ready"; li.appendChild(b); }
-  if (p.idle){ const b=document.createElement("span"); b.className="badge"; b.textContent="idle"; li.appendChild(b); }
+  if (!p.bot && !p.spectate && p.ready){ const t=document.createElement("span"); t.className="tags"; t.textContent="· ready"; li.appendChild(t); }
+  if (p.idle){ const t=document.createElement("span"); t.className="tags"; t.textContent="· idle"; li.appendChild(t); }
   if (canKick && p.id!==myId){
     if (p.bot) {
       const k=document.createElement("button"); k.className="kick"; k.textContent="remove";
@@ -253,12 +261,28 @@ function renderWaiting(){
   if (!lobby) return;
   $("roomLabel").textContent = "lobby " + lobby.code;
   $("wcode").textContent = lobby.code;
-  $("invite").value = location.origin + location.pathname + "?lobby=" + lobby.code;
   const isLead = lobby.leaderId===myId;
+  // Role-split actions: non-leaders only ready up; the start button never
+  // shows disabled to someone who can't press it.
+  $("readyBtn").style.display = isLead ? "none" : "";
+  $("start").style.display = isLead ? "" : "none";
   $("start").disabled = !isLead;
-  $("start").textContent = isLead ? "Start game" : "Waiting for leader";
   $("lockHint").textContent = isLead ? "You are leader. Changes apply to everyone." : "Only the leader can edit.";
   ["w-max","w-win","w-speed","w-cool","w-arena","w-bots","w-dash","w-mode"].forEach(id=>{ $(id).disabled=!isLead; });
+  // Non-leaders get a one-line read-only summary instead of dead controls.
+  $("wsettingsCard").style.display = isLead ? "" : "none";
+  const sum = $("wsettingsSummary");
+  if (isLead) {
+    sum.style.display = "none";
+  } else {
+    const s = lobby.settings;
+    sum.style.display = "";
+    sum.textContent = "Room: " + s.maxPlayers + " max · " +
+      (s.gameMode === "freeze" ? "freeze tag" : s.pointsToWin > 0 ? "first to " + s.pointsToWin + " pts" : "most points") +
+      " · " + (s.arena === "small" ? "small" : s.arena === "large" ? "large" : "classic") + " arena · " +
+      (s.speed >= 320 ? "fast" : s.speed <= 200 ? "slow" : "normal") + " speed";
+  }
+  $("wsettingsCard").classList.toggle("is-locked", !isLead);
   $("w-max").value=String(lobby.settings.maxPlayers);
   $("w-win").value=String(lobby.settings.pointsToWin);
   $("w-speed").value=String(lobby.settings.speed);
@@ -271,6 +295,8 @@ function renderWaiting(){
   const freezePicked = (lobby.settings.gameMode || "classic") === "freeze";
   $("w-win").disabled = !isLead || freezePicked;
   $("w-winrow").classList.toggle("row-disabled", freezePicked);
+  // Bot management is leader-only and hidden entirely when bots are off.
+  $("wbotrow").style.display = (!isLead || !lobby.settings.allowBots) ? "none" : "";
   const ul=$("wplayers"); ul.innerHTML="";
   const seated = lobby.players.filter(p=>!p.spectate);
   seated.forEach(p=>ul.appendChild(playerRow(p,true,isLead)));
@@ -302,6 +328,7 @@ let lastMyTags=0, lastWinnerSeen=false;
 // lands, innerHTML wipes it, mouseup lands nowhere -> click never fires).
 // Rebuild only when the visible content actually changes.
 let lastRosterSig="", lastBoardSig="";
+let bannerTimer=null, lastBannerKey="";
 const lastDashingMap={};
 let dragStartXY=null;
 addEventListener("keydown",(e)=>{
@@ -349,79 +376,71 @@ function renderGame(){
     canvas.width=game.arena.w; canvas.height=game.arena.h;
   }
   $("gtitle").textContent="Arena — "+game.code;
-  const seated = game.players.filter(p=>!p.spectate);
-  $("countLabel").textContent=seated.length+" players";
   const it=game.players.find(p=>p.it);
   const me=game.players.find(p=>p.id===myId);
   const mode = game.settings ? game.settings.gameMode : "classic";
   const sorted = mode === "freeze"
     ? game.players.filter(p=>!p.spectate).slice().sort((a,b)=>(b.tags||0)-(a.tags||0))
     : game.players.filter(p=>!p.spectate).slice().sort((a,b)=>((b.pts||0)-(a.pts||0)) || ((b.tags||0)-(a.tags||0)));
-  $("itLabel").textContent=it?("it: "+it.name+(it.id===myId?" (you)":"")):"";
+  // One pill for IT status: persistent, glanceable, no banner parsing needed.
+  const itEl = $("itLabel");
+  if (it && it.id === myId) {
+    itEl.textContent = "YOU'RE IT";
+    itEl.classList.add("is-it");
+  } else if (it) {
+    itEl.textContent = "IT: " + it.name;
+    itEl.classList.remove("is-it");
+  } else {
+    itEl.textContent = "";
+    itEl.classList.remove("is-it");
+  }
+  // Clock lives in the head; the foot target is static text (no wrapping).
   const fmtClock=(ms)=>{ const s=Math.ceil(ms/1000); return Math.floor(s/60)+":"+String(s%60).padStart(2,"0"); };
-  if (game.timeLeft != null && !game.winnerId && !game.winTeam) {
-    if (mode === "freeze") {
-      $("scoreLabel").textContent = "runners " + fmtClock(game.timeLeft);
-    } else {
-      const ptw=game.settings?game.settings.pointsToWin:1500;
-      $("scoreLabel").textContent=(ptw>0?("first to "+ptw+" pts"):"most points")+" · "+fmtClock(game.timeLeft);
-    }
+  $("clockLabel").textContent = (game.timeLeft != null && !game.winnerId && !game.winTeam) ? fmtClock(game.timeLeft) : "--:--";
+  if (mode === "freeze") {
+    $("scoreLabel").textContent = "freeze everyone";
   } else {
     const ptw=game.settings?game.settings.pointsToWin:1500;
-    $("scoreLabel").textContent=ptw>0?("first to "+ptw+" pts"):"most points";
+    $("scoreLabel").textContent = ptw>0 ? ("first to "+ptw+" pts") : "most points";
   }
+  // Single dash meter: pips only. The recharging pip shows live fill.
+  // dashHud stays empty mid-game (only dash-off / spectating states).
   if (me && !me.spectate) {
     const charges = me.dashCharges ?? 2;
     const max = me.dashMax || 2;
     const left = me.dashMsLeft || 0;
     const total = me.dashCdTotal || 4000;
-    const bar = $("dashBar");
-    let pips = $("dashPips");
-    if (!pips) {
-      pips = document.createElement("span");
-      pips.id = "dashPips";
-      pips.className = "dash-pips";
-      $("dashHud").after(pips);
-    }
+    const pips = $("dashPips");
     if (total === 0) {
       $("dashHud").textContent = "dash off";
-      bar.style.width = "0%";
-      bar.className = "cool";
       pips.innerHTML = "";
       const btn = $("dashBtn");
       if (btn) btn.disabled = true;
     } else {
-    pips.innerHTML = "";
-    for (let i = 0; i < max; i++) {
-      const d = document.createElement("span");
-      d.className = "pip" + (i < charges ? " full" : "");
-      pips.appendChild(d);
-    }
-    if (me.dashing) {
-      $("dashHud").textContent = "dashing";
-      bar.style.width = "100%";
-      bar.className = "active";
-    } else if (charges < max) {
-      // A charge is still regenerating: fill the bar 0→100% as dashMsLeft counts down.
-      const pct = total > 0 ? Math.max(4, Math.min(100, Math.round((1 - left / total) * 100))) : 4;
-      if (charges <= 0) {
-        $("dashHud").textContent = "dash " + (left / 1000).toFixed(1) + "s";
-      } else {
-        $("dashHud").textContent = charges + " dash";
+      $("dashHud").textContent = "";
+      pips.innerHTML = "";
+      for (let i = 0; i < max; i++) {
+        const d = document.createElement("span");
+        if (i < charges) {
+          d.className = "pip full";
+        } else if (i === charges) {
+          // Next charge up: fill 0→100% as dashMsLeft counts down.
+          const pct = total > 0 ? Math.max(4, Math.min(100, Math.round((1 - left / total) * 100))) : 4;
+          d.className = "pip";
+          const f = document.createElement("span");
+          f.className = "fill";
+          f.style.width = pct + "%";
+          d.appendChild(f);
+        } else {
+          d.className = "pip";
+        }
+        pips.appendChild(d);
       }
-      bar.style.width = pct + "%";
-      bar.className = "cool";
-    } else {
-      $("dashHud").textContent = max > 1 ? max + " dashes" : "dash ready";
-      bar.style.width = "100%";
-      bar.className = "";
-    }
-    const btn = $("dashBtn");
-    if (btn) btn.disabled = charges <= 0 || !!game.winnerId || !!game.winTeam || (me && me.spectate);
+      const btn = $("dashBtn");
+      if (btn) btn.disabled = charges <= 0 || !!game.winnerId || !!game.winTeam;
     }
   } else {
     $("dashHud").textContent = me && me.spectate ? "spectating" : "";
-    $("dashBar").style.width = "0%";
     const pips = $("dashPips");
     if (pips) pips.innerHTML = "";
   }
@@ -471,7 +490,7 @@ function renderGame(){
     // Gated on a signature: state arrives at 30Hz but standings are static
     // once the winner is set, so skip the rebuild when nothing changed.
     const boardSig = (game.winTeam || "") + "|" + (game.winnerId || "") + "|" +
-      sorted.map(p=>[p.id,p.pts,p.tags,p.bot,p.difficulty,p.color,p.shape,p.name].join(":")).join("|") +
+      sorted.map(p=>[p.id,p.pts,p.color,p.name].join(":")).join("|") +
       "|" + game.leaderId + "|" + myId;
     if (boardSig !== lastBoardSig) {
       lastBoardSig = boardSig;
@@ -479,29 +498,30 @@ function renderGame(){
     board.textContent = "";
     let topPts = -Infinity;
     for (const p of sorted) topPts = Math.max(topPts, p.pts || 0);
-    sorted.forEach((p, i) => {
+    // Trimmed standings: top 3 plus your own row so the overlay stays small.
+    const selfPos = sorted.findIndex(p=>p.id===myId);
+    const rows = sorted.slice(0, 3).map(p=>({p, rank: sorted.indexOf(p)+1, sep:false}));
+    if (selfPos >= 3) {
+      rows.push({sep:true});
+      rows.push({p: sorted[selfPos], rank: selfPos+1, sep:false});
+    }
+    const addBoardRow = (p, rank) => {
       const li = document.createElement("li");
       const isWon = game.winTeam === "draw" ? (p.pts || 0) === topPts : p.id === game.winnerId;
       if (isWon) li.className = "won";
-      const rank = document.createElement("span");
-      rank.className = "rank";
-      rank.textContent = String(i + 1).padStart(2, "0");
+      const rk = document.createElement("span");
+      rk.className = "rank";
+      rk.textContent = String(rank).padStart(2, "0");
       const sw = document.createElement("span");
       sw.className = "swatch";
       sw.style.background = p.color;
-      const sh = document.createElement("span");
-      sh.className = "shape-ico";
-      sh.textContent = p.shape === "square" ? "S" : p.shape === "triangle" ? "T" : "O";
       const nm = document.createElement("span");
       nm.className = "pname";
       nm.textContent = p.name;
       const pt = document.createElement("span");
       pt.className = "pts";
       pt.textContent = (p.pts || 0) + " pts";
-      const tg = document.createElement("span");
-      tg.className = "tags";
-      tg.textContent = (p.tags || 0) + " tags";
-      li.append(rank, sw, sh, nm, pt, tg);
+      li.append(rk, sw, nm, pt);
       if (isWon) {
         const b = document.createElement("span");
         b.className = "badge win";
@@ -514,13 +534,17 @@ function renderGame(){
         b.textContent = "you";
         li.appendChild(b);
       }
-      if (p.bot) {
-        const b = document.createElement("span");
-        b.className = "badge";
-        b.textContent = p.difficulty || "bot";
-        li.appendChild(b);
-      }
       board.appendChild(li);
+    };
+    rows.forEach(r => {
+      if (r.sep) {
+        const li = document.createElement("li");
+        li.className = "ellipsis";
+        li.textContent = "···";
+        board.appendChild(li);
+      } else {
+        addBoardRow(r.p, r.rank);
+      }
     });
     }
     $("again").style.display = game.leaderId===myId ? "" : "none";
@@ -535,28 +559,26 @@ function renderGame(){
     else if(me.id===(it&&it.id)){bn.textContent="You are IT — go tag someone.";bn.className="is-it";}
     else if(it){bn.textContent=it.name+" is IT — keep your distance.";bn.className="safe";}
   }
-  // Throttled for the same reason as the board: rebuilding at 30Hz makes
-  // the per-bot remove buttons unclickable (element replaced mid-click).
-  // Clicks are handled by a single delegated listener on #players below,
-  // so buttons keep working even across rebuilds.
-  const rosterSig = sorted.map(p=>[p.id,p.pts,p.tags,p.it,p.frozen,p.idle,p.spectate,p.ready,p.color,p.shape,p.difficulty,p.bot,p.name].join(":")).join("|") +
+  // Slim roster: rank + swatch + name + pts, plus you/frozen markers and the
+  // leader's bot-remove. Tags, idle, difficulty and the IT badge are gone:
+  // the arena (ring + labels) already shows who's IT.
+  const rosterSig = sorted.map(p=>[p.id,p.pts,p.it,p.frozen,p.color,p.name].join(":")).join("|") +
     "|" + game.players.filter(p=>p.spectate).map(p=>p.id+":"+p.name).join("|") +
     "|" + game.leaderId + "|" + myId;
   if (rosterSig !== lastRosterSig) {
     lastRosterSig = rosterSig;
   const ul=$("players"); ul.innerHTML="";
   const isLeadGame = game.leaderId===myId;
-  sorted.forEach(p=>{
+  sorted.forEach((p,i)=>{
     const li=document.createElement("li");
+    if (p.it) li.className = "is-it-row";
+    const rk=document.createElement("span");rk.className="rank";rk.textContent=String(i+1).padStart(2,"0");li.appendChild(rk);
     const sw=document.createElement("span");sw.className="swatch";sw.style.background=p.color;
-    const nm=document.createElement("span");nm.className="pname";nm.textContent=p.bot?(p.name+" ("+(p.difficulty||"hard")+ ")"):p.name;
+    const nm=document.createElement("span");nm.className="pname";nm.textContent=p.name;
     li.append(sw,nm);
     const pt=document.createElement("span");pt.className="pts";pt.textContent=(p.pts||0)+" pts";li.appendChild(pt);
-    const tg=document.createElement("span");tg.className="tags";tg.textContent=(p.tags||0)+" tags";li.appendChild(tg);
     if(p.frozen){const b=document.createElement("span");b.className="badge";b.textContent="frozen";li.appendChild(b);}
-    if(p.it){const b=document.createElement("span");b.className="badge it";b.textContent="IT";li.appendChild(b);}
     if(p.id===myId){const b=document.createElement("span");b.className="badge you";b.textContent="you";li.appendChild(b);}
-    if(p.idle){const b=document.createElement("span");b.className="badge";b.textContent="idle";li.appendChild(b);}
     if (isLeadGame && p.bot) {
       const k=document.createElement("button");k.className="kick";k.textContent="remove";
       k.setAttribute("data-remove-bot", p.id);li.appendChild(k);
@@ -570,6 +592,17 @@ function renderGame(){
     ul.appendChild(li);
   }
   }
+  // Transient toast: re-arm the fade whenever the message changes so the
+  // banner never blocks the canvas mid-chase. The IT pill carries state.
+  const bannerKey = bn.textContent + "|" + bn.className;
+  if (bannerKey !== lastBannerKey) {
+    lastBannerKey = bannerKey;
+    bn.classList.remove("fade");
+    clearTimeout(bannerTimer);
+    bannerTimer = setTimeout(()=>{ bn.classList.add("fade"); }, 2800);
+  }
+  // Bot management is leader-only.
+  $("gbotrow").style.display = game.leaderId===myId ? "" : "none";
   $("gend").disabled = !(game.leaderId===myId);
   history.replaceState(null,"","?lobby="+game.code);
 }
@@ -631,34 +664,36 @@ function draw(){
       ctx.strokeStyle="#fffdf7";ctx.globalAlpha=0.9;ctx.lineWidth=4;ctx.stroke();ctx.globalAlpha=1;
     }
   }
-  // players, me last so YOU stays on top
+  // players, me last so self stays on top
   const ordered=list.slice().sort((a,b)=>(a.id===myId?1:0)-(b.id===myId?1:0));
   for(const p of ordered){
     const r=renderPos[p.id]||p;
     const frozen = !!p.frozen;
     drawShape(r.x,r.y,15,p.shape||"circle",frozen?"#868e96":p.color,p.it && !frozen,!!p.dashing);
-    ctx.font="12px ui-monospace, Menlo, Consolas, monospace";ctx.textAlign="center";
-    const label=(p.it && !frozen ?"IT ":"")+(frozen?"FROZEN ":"")+p.name;
-    ctx.lineWidth=3;ctx.strokeStyle="rgba(0,0,0,0.85)";ctx.strokeText(label,r.x,r.y-24);
-    ctx.fillStyle="#fffdf7";ctx.fillText(label,r.x,r.y-24);
+    // Labels stay minimal mid-chase: IT, yourself, and frozen runners only.
+    // Everyone else is color + shape (full names live in the roster).
+    const showLabel = screen==="game" && (p.id===myId || (p.it && !frozen) || frozen);
+    if (showLabel) {
+      ctx.font="12px ui-monospace, Menlo, Consolas, monospace";ctx.textAlign="center";
+      const label=(p.it && !frozen ?"IT ":"")+(frozen?"FROZEN ":"")+p.name;
+      ctx.lineWidth=3;ctx.strokeStyle="rgba(0,0,0,0.85)";ctx.strokeText(label,r.x,r.y-24);
+      ctx.fillStyle="#fffdf7";ctx.fillText(label,r.x,r.y-24);
+    }
     if(p.id===myId&&screen==="game"){
-      const t="YOU";
-      ctx.font="bold 11px ui-monospace, Menlo, Consolas, monospace";
-      const wdt=ctx.measureText(t).width+14;
-      const bx=r.x-wdt/2, by=r.y+16;
-      ctx.fillStyle="#000";ctx.fillRect(bx,by,wdt,18);
-      ctx.fillStyle="#ffe066";ctx.fillText(t,r.x,by+13);
+      // Subtle under-glow marks you; no boxed tag pulling eyes downward.
+      ctx.beginPath();ctx.arc(r.x,r.y+2,19,0,Math.PI*2);
+      ctx.strokeStyle="rgba(255,224,102,0.85)";ctx.lineWidth=2;ctx.stroke();
     }
   }
-  // touch joystick visual
+  // touch joystick visual (small + faint so it never covers the action)
   if (dragging && dragStartXY && screen==="game") {
     const r=canvas.getBoundingClientRect();
     const sx=dragStartXY.x-r.left, sy=dragStartXY.y-r.top;
-    ctx.beginPath();ctx.arc(sx,sy,26,0,Math.PI*2);
-    ctx.strokeStyle="rgba(255,253,247,0.5)";ctx.lineWidth=2;ctx.stroke();
+    ctx.beginPath();ctx.arc(sx,sy,18,0,Math.PI*2);
+    ctx.strokeStyle="rgba(255,253,247,0.35)";ctx.lineWidth=1.5;ctx.stroke();
     if (dragVec) {
-      ctx.beginPath();ctx.arc(sx+dragVec.x*40,sy+dragVec.y*40,12,0,Math.PI*2);
-      ctx.fillStyle="rgba(255,253,247,0.7)";ctx.fill();
+      ctx.beginPath();ctx.arc(sx+dragVec.x*28,sy+dragVec.y*28,9,0,Math.PI*2);
+      ctx.fillStyle="rgba(255,253,247,0.5)";ctx.fill();
     }
   }
   requestAnimationFrame(draw);
@@ -668,7 +703,7 @@ function draw(){
 (function init(){
   show("landing");
   const q=new URLSearchParams(location.search).get("lobby");
-  if(q) $("code").value=q.toUpperCase();
+  if(q) { $("code").value=q.toUpperCase(); $("code").focus(); }
   buildPickers();
   syncPrefButtons();
   syncTargetRow();
