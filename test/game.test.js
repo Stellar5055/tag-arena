@@ -9,6 +9,10 @@ const {
   cleanDifficulty,
   cleanName,
   makeBotPlayer,
+  tryDash,
+  regenDash,
+  resetForStart,
+  removePlayer,
   publicPlayers,
   selectBotTarget,
   thinkBot,
@@ -18,6 +22,8 @@ const {
   freezeOutcome,
   RADIUS,
   CLASSIC_DURATION_MS,
+  HUMAN_FLEE_BOOST_MULT,
+  IDLE_KICK_MS,
 } = require("../server.js");
 
 test("cleanSettings clamps to allowed values", () => {
@@ -54,20 +60,24 @@ test("cleanDifficulty and cleanName behave", () => {
   assert.equal(cleanDifficulty("easy"), "easy");
   assert.equal(cleanDifficulty("bogus"), "hard");
   assert.equal(cleanName("Bot 1", false), "Player");
+  assert.equal(cleanName("Bot_1", false), "Player");
+  assert.equal(cleanName("BotX", false), "Player");
+  assert.equal(cleanName("bot-2", false), "Player");
   assert.equal(cleanName("  ", false), "Player");
   assert.equal(cleanName("Ada", false), "Ada");
+  assert.equal(cleanName("Bottle", false), "Player"); // overbroad by design, avoids impersonation
 });
 
 test("makeCode is unique against existing lobbies", () => {
-  lobbies.set("ABCD", {});
+  lobbies.set("ABCDE", {});
   try {
     for (let i = 0; i < 200; i++) {
       const c = makeCode();
-      assert.ok(typeof c === "string" && c.length >= 4 && c.length <= 8);
+      assert.ok(typeof c === "string" && c.length >= 5 && c.length <= 6, `len ${c}`);
       assert.ok(!lobbies.has(c), `collision on ${c}`);
     }
   } finally {
-    lobbies.delete("ABCD");
+    lobbies.delete("ABCDE");
   }
 });
 
@@ -247,4 +257,56 @@ test("thinkBot commits to the rotated target and aims at it", () => {
   } finally {
     Math.random = realRandom;
   }
+});
+
+test("tryDash keeps the original regen clock when spending the second charge", () => {
+  const lobby = { settings: cleanSettings({ dashCdMs: 3000 }) };
+  const p = { dashCharges: 2, dashNextAt: 0, dashUntil: 0, dashGraceUntil: 0, lastDx: 1, lastDy: 0 };
+  const t0 = 1_000_000;
+  assert.ok(tryDash(lobby, p, 1, 0, t0));
+  assert.equal(p.dashCharges, 1);
+  const firstNext = p.dashNextAt;
+  assert.equal(firstNext, t0 + 3000);
+  // Second quick spend must not push the already-ticking regen later.
+  assert.ok(tryDash(lobby, p, 1, 0, t0 + 500));
+  assert.equal(p.dashCharges, 0);
+  assert.equal(p.dashNextAt, firstNext);
+  // Regen then fires sequentially.
+  regenDash(lobby, p, firstNext);
+  assert.equal(p.dashCharges, 1);
+  assert.ok(p.dashNextAt > firstNext);
+});
+
+test("freezeOutcome matches tick rule: mixed human+bot needs everyone frozen", () => {
+  const it = { id: "it", tags: 0 };
+  const frozenHuman = { id: "h", frozen: true, spectate: false };
+  const freeBot = { id: "b", frozen: false, spectate: false, bot: true };
+  assert.equal(freezeOutcome([it, frozenHuman, freeBot], it, 10, false), null);
+  assert.equal(freezeOutcome([it, frozenHuman, { ...freeBot, frozen: true }], it, 10, false), "it");
+});
+
+test("resetForStart auto-joins spectators (Play again parity with End)", () => {
+  const lobby = { settings: cleanSettings({ maxPlayers: 8 }), players: new Map(), tagCooldownUntil: 0, endsAt: 0, winnerId: "x", winTeam: "it" };
+  lobby.players.set("a", { id: "a", spectate: false, x: 0, y: 0, tags: 5, it: true, bot: false, ready: true });
+  lobby.players.set("s", { id: "s", spectate: true, x: -100, y: -100, tags: 9, it: false, bot: false, ready: false });
+  resetForStart(lobby);
+  const s = lobby.players.get("s");
+  assert.equal(s.spectate, false);
+  assert.equal(s.tags, 0);
+  assert.ok(s.x >= 0 && s.y >= 0);
+});
+
+test("removePlayer sets a tag cooldown when reassigning IT", () => {
+  const lobby = { code: "TEST1", leaderId: "a", settings: cleanSettings({}), players: new Map(), sockets: new Map(), tagCooldownUntil: 0 };
+  lobby.players.set("a", { id: "a", it: true, spectate: false, frozen: false, bot: false });
+  lobby.players.set("b", { id: "b", it: false, spectate: false, frozen: false, bot: false });
+  const before = Date.now();
+  removePlayer(lobby, "a");
+  assert.ok(lobby.tagCooldownUntil >= before);
+  assert.ok([...lobby.players.values()].some((p) => p.it));
+});
+
+test("human flee boost constant is sane", () => {
+  assert.ok(HUMAN_FLEE_BOOST_MULT > 1 && HUMAN_FLEE_BOOST_MULT < 1.5);
+  assert.ok(IDLE_KICK_MS >= 60000);
 });

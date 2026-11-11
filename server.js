@@ -1,6 +1,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const { WebSocketServer, WebSocket } = require("ws");
 
 const RADIUS = 16;
@@ -26,12 +27,31 @@ const DEFAULT_SETTINGS = {
 // code -> { code, leaderId, state, settings, players: Map<id,player>, sockets: Map<id,ws>, tagCooldownUntil, winnerId }
 const lobbies = new Map();
 
+// Shared tuning + guards. Defined up top so helpers like cleanName
+// never hit TDZ ordering issues.
+const DASH_TIME_MS = 160;
+const DASH_GRACE_MS = 200;
+const HUMAN_DASH_MULT = 3.1;
+const HUMAN_FLEE_BOOST_MULT = 1.18;
+const DASH_MAX_CHARGES = 2;
+const DASH_REGEN_MS = 4000;
+const FREEZE_DURATION_MS = 120000;
+const CLASSIC_DURATION_MS = 180000;
+const IDLE_AFTER_MS = 15000;
+const IDLE_KICK_MS = 120000;
+const LOBBY_TTL_MS = 3 * 60 * 60 * 1000;
+// Block any human name starting with "bot" so players can't impersonate bots.
+// Intentionally broad (Bot_1, BotX, bot-2 all match); "Bottle"-style false
+// positives are acceptable vs impersonation confusion.
+const BOT_NAME_RE = /^bot/i;
+
 function makeCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  for (let len = 4; len <= 6; len++) {
+  const randChar = () => chars[crypto.randomInt(chars.length)];
+  for (let len = 5; len <= 6; len++) {
     for (let tries = 0; tries < 50; tries++) {
       let c = "";
-      for (let i = 0; i < len; i++) c += chars[Math.floor(Math.random() * chars.length)];
+      for (let i = 0; i < len; i++) c += randChar();
       if (!lobbies.has(c)) return c;
     }
   }
@@ -230,17 +250,6 @@ function selectBotTarget(p, players, now) {
   return bestOf(pool);
 }
 
-const DASH_TIME_MS = 160;
-const DASH_GRACE_MS = 200;
-const HUMAN_DASH_MULT = 3.1;
-const DASH_MAX_CHARGES = 2;
-const DASH_REGEN_MS = 4000;
-const FREEZE_DURATION_MS = 120000;
-const CLASSIC_DURATION_MS = 180000;
-const IDLE_AFTER_MS = 15000;
-const LOBBY_TTL_MS = 3 * 60 * 60 * 1000;
-const BOT_NAME_RE = /^bot[\s\d]/i;
-
 function cleanDifficulty(d) {
   const s = String(d || "hard").toLowerCase();
   return BOT_DIFFS[s] ? s : "hard";
@@ -297,7 +306,7 @@ function makeBotPlayer(lobby, botsCount, difficulty) {
   const kind = BOT_ORDER[botsCount % BOT_ORDER.length];
   const diff = cleanDifficulty(difficulty);
   const pos = spawnPos(lobby);
-  const botId = "bot-" + Math.random().toString(36).slice(2);
+  const botId = "bot-" + crypto.randomUUID().replace(/-/g, "").slice(0, 12);
   return {
     id: botId,
     name: "Bot " + (botsCount + 1),
@@ -331,6 +340,7 @@ function makeBotPlayer(lobby, botsCount, difficulty) {
     lastCheckT: Date.now(),
     fleeBoostUntil: 0,
     frozenUntil: 0,
+    unfreezeNextAt: 0,
     jukeUntil: 0,
     jukeX: 0,
     jukeY: 0,
@@ -365,7 +375,8 @@ function dashRegenMs(lobby, p) {
 
 function tryDash(lobby, p, dirX, dirY, now) {
   if (lobby.settings.dashCdMs === 0) return false;
-  if ((p.dashCharges ?? DASH_MAX_CHARGES) <= 0) return false;
+  const before = p.dashCharges ?? DASH_MAX_CHARGES;
+  if (before <= 0) return false;
   if (now < (p.dashUntil || 0)) return false;
   const len = Math.hypot(dirX, dirY);
   if (!(len > 0.01)) return false;
@@ -375,8 +386,10 @@ function tryDash(lobby, p, dirX, dirY, now) {
   p.lastDy = p.dashDy;
   p.dashUntil = now + DASH_TIME_MS;
   p.dashGraceUntil = p.dashUntil + DASH_GRACE_MS;
-  p.dashCharges = (p.dashCharges ?? DASH_MAX_CHARGES) - 1;
-  if (p.dashCharges < DASH_MAX_CHARGES) {
+  p.dashCharges = before - 1;
+  // Only (re)start the regen clock when spending from full. Overwriting it
+  // on every spend steals time from the charge already regenerating.
+  if (before >= DASH_MAX_CHARGES) {
     p.dashNextAt = now + dashRegenMs(lobby, p);
   }
   return true;
@@ -614,6 +627,8 @@ function removePlayer(lobby, playerId) {
   const eligible = [...lobby.players.values()].filter((p) => !p.spectate && !p.frozen);
   if (!eligible.some((p) => p.it) && eligible.length > 0) {
     eligible[Math.floor(Math.random() * eligible.length)].it = true;
+    // Fresh IT must not tag instantly after a leave/migration.
+    lobby.tagCooldownUntil = Math.max(lobby.tagCooldownUntil || 0, Date.now() + 1000);
   }
 }
 
@@ -623,8 +638,16 @@ function resetForStart(lobby) {
   lobby.tagCooldownUntil = Date.now() + 1500;
   lobby.endsAt = Date.now() + (lobby.settings.gameMode === "freeze" ? FREEZE_DURATION_MS : CLASSIC_DURATION_MS);
   const now = Date.now();
+  // Spectators from mid-game joins auto-join on restart (mirrors endGame).
+  // Clamp to maxPlayers so a full lobby + spectators can't overflow.
+  const seatedCount = [...lobby.players.values()].filter((p) => !p.spectate).length;
+  let seatsLeft = Math.max(0, lobby.settings.maxPlayers - seatedCount);
   for (const p of lobby.players.values()) {
-    if (p.spectate) continue;
+    if (p.spectate) {
+      if (seatsLeft <= 0 || p.bot) continue;
+      p.spectate = false;
+      seatsLeft--;
+    }
     const pos = spawnPos(lobby);
     p.x = pos.x;
     p.y = pos.y;
@@ -646,6 +669,9 @@ function resetForStart(lobby) {
     p.lastDy = 0;
     p.frozen = false;
     p.ready = false;
+    p.fleeBoostUntil = 0;
+    p.frozenUntil = 0;
+    p.unfreezeNextAt = 0;
     if (p.bot) {
       p.thinkAt = now + botReactMs(p) + Math.random() * 150;
       p.tx = pos.x;
@@ -672,15 +698,36 @@ function resetForStart(lobby) {
 }
 
 // --- 30hz authoritative loop, only playing lobbies ---
+let lastTickAt = Date.now();
 const tickTimer = setInterval(() => {
-  const dt = 1 / 30;
   const now = Date.now();
+  // Real elapsed time, clamped: slow-motion under load is worse than a
+  // single clamped step, and uncapped dt would tunnel through walls/tags.
+  const rawDt = (now - lastTickAt) / 1000;
+  lastTickAt = now;
+  const dt = Math.min(0.05, Math.max(0.005, Number.isFinite(rawDt) ? rawDt : 1 / 30));
   for (const lobby of lobbies.values()) {
+    try {
     if (lobby.createdAt && now - lobby.createdAt > LOBBY_TTL_MS) {
       for (const ws of lobby.sockets.values()) send(ws, { t: "error", msg: "Lobby expired after 3 hours." });
       lobbies.delete(lobby.code);
       continue;
     }
+    // Idle sweep: AFK humans squat seats and block maxPlayers/ready.
+    // Bots never idle. Kicked players get a message when their socket is live.
+    for (const [pid, p] of [...lobby.players.entries()]) {
+      if (p.bot) continue;
+      if (now - (p.lastActiveAt || now) > IDLE_KICK_MS) {
+        const ws = lobby.sockets.get(pid);
+        if (ws) send(ws, { t: "error", msg: "Kicked for being idle over 2 minutes." });
+        const wasPlaying = lobby.state === "playing";
+        removePlayer(lobby, pid);
+        if (!lobbies.has(lobby.code)) break;
+        if (wasPlaying) broadcastState(lobby);
+        else broadcastLobby(lobby);
+      }
+    }
+    if (!lobbies.has(lobby.code)) continue;
     if (lobby.state !== "playing" || lobby.winnerId || lobby.winTeam) {
       continue;
     }
@@ -692,6 +739,7 @@ const tickTimer = setInterval(() => {
       regenDash(lobby, p, now);
       if (p.bot || p.spectate || p.frozen) continue;
       if (now < (p.frozenUntil || 0)) continue;
+      const fleeBoost = !p.it && now < (p.fleeBoostUntil || 0) ? HUMAN_FLEE_BOOST_MULT : 1;
       if (now < (p.dashUntil || 0)) {
         p.x += (p.dashDx || 1) * speed * HUMAN_DASH_MULT * dt;
         p.y += (p.dashDy || 0) * speed * HUMAN_DASH_MULT * dt;
@@ -713,8 +761,11 @@ const tickTimer = setInterval(() => {
           const ny = dy / len;
           p.lastDx = nx;
           p.lastDy = ny;
-          p.x += nx * speed * dt;
-          p.y += ny * speed * dt;
+          // Preserve analog magnitude up to 1 (touch half-push = half speed),
+          // normalize combined keyboard+touch overflow beyond 1.
+          const mag = Math.min(1, len);
+          p.x += nx * speed * fleeBoost * mag * dt;
+          p.y += ny * speed * fleeBoost * mag * dt;
         }
       }
       p.x = Math.max(RADIUS, Math.min(w - RADIUS, p.x));
@@ -748,22 +799,28 @@ const tickTimer = setInterval(() => {
           }
         }
       }
-      // unfreeze: non-IT, non-frozen touches frozen
+      // unfreeze: non-IT, non-frozen touches frozen. Rescuer rate-limited so
+      // two runners can't chain-unfreeze faster than IT can refreeze; the
+      // rescued runner gets brief grace so instant re-freeze feels fair.
       for (const f of all) {
         if (!f.frozen || f.spectate || f.it) continue;
         for (const q of all) {
           if (q === f || q.spectate || q.frozen || q.it) continue;
+          if (now < (q.unfreezeNextAt || 0)) continue;
           if (Math.hypot(q.x - f.x, q.y - f.y) < RADIUS * 2) {
             f.frozen = false;
+            f.dashGraceUntil = Math.max(f.dashGraceUntil || 0, now + 800);
+            q.unfreezeNextAt = now + 1200;
             break;
           }
         }
       }
-      const runners = all.filter((p) => !p.it && !p.spectate && !p.bot);
-      const frozenRunners = runners.filter((p) => p.frozen);
-      const humansFrozen = runners.length > 0 && frozenRunners.length === runners.length;
-      const botsAllFrozen = runners.length === 0 && all.filter((p) => !p.it && !p.spectate).every((p) => p.frozen);
-      if ((humansFrozen || botsAllFrozen) && all.some((p) => !p.spectate && !p.it)) {
+      // Match freezeOutcome helper: every active runner (humans AND bots)
+      // must be frozen. Previous code only checked humans and ended mixed
+      // lobbies early while bots still ran free.
+      const active = all.filter((p) => !p.it && !p.spectate);
+      const allFrozen = active.length > 0 && active.every((p) => p.frozen);
+      if (allFrozen && all.some((p) => !p.spectate && !p.it)) {
         lobby.winTeam = "it";
         lobby.winnerId = itPlayer ? itPlayer.id : null;
       } else if (lobby.settings.tagsToWin > 0 && itPlayer && (itPlayer.tags || 0) >= lobby.settings.tagsToWin) {
@@ -807,6 +864,7 @@ const tickTimer = setInterval(() => {
           break;
         }
       }
+      }
       if (!lobby.winnerId && !lobby.winTeam && lobby.endsAt && now >= lobby.endsAt) {
         const result = classicTimeWinner(all);
         if (result) {
@@ -815,9 +873,12 @@ const tickTimer = setInterval(() => {
         }
       }
     }
-    }
 
     broadcastState(lobby);
+    } catch (err) {
+      // One bad lobby must never kill every other lobby.
+      console.error("tick error for lobby", lobby && lobby.code, err);
+    }
   }
 }, 1000 / 30);
 if (tickTimer.unref) tickTimer.unref();
@@ -833,7 +894,7 @@ const server = http.createServer((req, res) => {
     res.end("method not allowed");
     return;
   }
-  const urlPath = req.url.split("?")[0];
+  const urlPath = (req.url || "/").split("?")[0];
   if (urlPath === "/healthz") {
     res.writeHead(200, {
       "Content-Type": "application/json; charset=utf-8",
@@ -842,24 +903,35 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({ ok: true, lobbies: lobbies.size }));
     return;
   }
-  if (urlPath === "/" || urlPath === "/index.html") {
-    res.writeHead(200, {
-      "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "no-store",
-      "X-Content-Type-Options": "nosniff",
-      "Referrer-Policy": "no-referrer",
+  const SECURE_HTML = {
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "X-Frame-Options": "DENY",
+    "Content-Security-Policy": "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; connect-src 'self' ws: wss:; base-uri 'self'; frame-ancestors 'none'",
+  };
+  const SECURE_STATIC = {
+    "Cache-Control": "public, max-age=3600",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+  };
+  function sendFile(filePath, headers) {
+    res.writeHead(200, headers);
+    const stream = fs.createReadStream(filePath);
+    stream.on("error", () => {
+      if (!res.headersSent) res.writeHead(404);
+      res.end("not found");
     });
-    fs.createReadStream(path.join(__dirname, "index.html")).pipe(res);
+    stream.pipe(res);
+  }
+  if (urlPath === "/" || urlPath === "/index.html") {
+    sendFile(path.join(__dirname, "index.html"), SECURE_HTML);
     return;
   }
   if (STATIC_FILES[urlPath]) {
     const entry = STATIC_FILES[urlPath];
-    res.writeHead(200, {
-      "Content-Type": entry.type,
-      "Cache-Control": "public, max-age=3600",
-      "X-Content-Type-Options": "nosniff",
-    });
-    fs.createReadStream(path.join(__dirname, entry.file)).pipe(res);
+    sendFile(path.join(__dirname, entry.file), Object.assign({ "Content-Type": entry.type }, SECURE_STATIC));
     return;
   }
   res.writeHead(404);
@@ -867,6 +939,34 @@ const server = http.createServer((req, res) => {
 });
 
 const wss = new WebSocketServer({ server, maxPayload: 8 * 1024 });
+
+// Heartbeat: Render/NATs silently drop idle sockets. Terminate dead peers
+// so `sockets` maps and broadcasts don't leak half-open connections.
+function heartbeat() {
+  for (const ws of wss.clients) {
+    if (ws.isAlive === false) {
+      try { ws.terminate(); } catch {}
+      continue;
+    }
+    ws.isAlive = false;
+    try { ws.ping(); } catch {}
+  }
+}
+const hbTimer = setInterval(heartbeat, 30000);
+if (hbTimer.unref) hbTimer.unref();
+
+function shutdown() {
+  clearInterval(tickTimer);
+  clearInterval(hbTimer);
+  try {
+    for (const ws of wss.clients) try { ws.close(1001, "server shutting down"); } catch {}
+  } finally {
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 2000).unref?.();
+  }
+}
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
 
 const KNOWN_MSG_TYPES = new Set([
   "createLobby",
@@ -883,6 +983,33 @@ const KNOWN_MSG_TYPES = new Set([
   "input",
 ]);
 const INPUT_MIN_GAP_MS = 20;
+// Lobby-action spam guard: creating/joining lobbies is unauthenticated, so
+// cap it per-socket. Input already has its own 20ms gate above.
+const RATE_LIMITS = {
+  createLobby: { max: 3, windowMs: 60000 },
+  joinLobby: { max: 10, windowMs: 60000 },
+  addBot: { max: 10, windowMs: 60000 },
+  startGame: { max: 10, windowMs: 60000 },
+};
+function hitRateLimit(socket, key) {
+  const cfg = RATE_LIMITS[key];
+  if (!cfg) return false;
+  const now = Date.now();
+  socket.rateAt = socket.rateAt || {};
+  const arr = (socket.rateAt[key] || []).filter((t) => now - t < cfg.windowMs);
+  if (arr.length >= cfg.max) {
+    socket.rateAt[key] = arr;
+    return true;
+  }
+  arr.push(now);
+  socket.rateAt[key] = arr;
+  return false;
+}
+
+function seatTaken(lobby, playerId) {
+  const ws = lobby.sockets.get(playerId);
+  return !!ws && ws.readyState === WebSocket.OPEN;
+}
 
 function leaveCurrent(socket) {
   const ctx = socket.ctx;
@@ -903,6 +1030,8 @@ function leaveCurrent(socket) {
 
 wss.on("connection", (socket) => {
   socket.ctx = null;
+  socket.isAlive = true;
+  socket.on("pong", () => { socket.isAlive = true; });
 
   socket.on("message", (data) => {
     let msg;
@@ -921,6 +1050,10 @@ wss.on("connection", (socket) => {
     const ctx = socket.ctx || {};
 
     if (msg.t === "createLobby") {
+      if (hitRateLimit(socket, "createLobby")) {
+        sendError(socket, "Slow down — too many lobbies. Try again in a minute.");
+        return;
+      }
       leaveCurrent(socket);
       const code = makeCode();
       const settings = cleanSettings(msg.settings);
@@ -969,6 +1102,9 @@ wss.on("connection", (socket) => {
         frozen: false,
         spectate: false,
         ready: true,
+        fleeBoostUntil: 0,
+        frozenUntil: 0,
+        unfreezeNextAt: 0,
         lastActiveAt: Date.now(),
       });
       lobby.leaderId = id;
@@ -977,6 +1113,10 @@ wss.on("connection", (socket) => {
       socket.ctx = { code, playerId: id };
       broadcastLobby(lobby);
     } else if (msg.t === "joinLobby") {
+      if (hitRateLimit(socket, "joinLobby")) {
+        sendError(socket, "Slow down — too many joins. Try again shortly.");
+        return;
+      }
       const code = String(msg.code || "").toUpperCase().trim().slice(0, 8);
       const lobby = lobbies.get(code);
       if (!lobby) {
@@ -988,6 +1128,13 @@ wss.on("connection", (socket) => {
       // mid-game joins become spectators and auto-join next round
       if (lobby.state !== "waiting" && !lobby.winnerId && !lobby.winTeam) {
         if (isReconnect) {
+          // Don't let a second tab/window steal a live seat: only allow
+          // takeover when the old socket is gone. Player IDs are public in
+          // state broadcasts, so blind overwrite would be a hijack.
+          if (seatTaken(lobby, id) && lobby.sockets.get(id) !== socket) {
+            sendError(socket, "That seat is already connected in another tab.");
+            return;
+          }
           const p = lobby.players.get(id);
           lobby.sockets.set(id, socket);
           socket.ctx = { code, playerId: id };
@@ -1032,6 +1179,9 @@ wss.on("connection", (socket) => {
           frozen: false,
           spectate: true,
           ready: false,
+          fleeBoostUntil: 0,
+          frozenUntil: 0,
+          unfreezeNextAt: 0,
           lastActiveAt: Date.now(),
         });
         lobby.sockets.set(id, socket);
@@ -1049,6 +1199,10 @@ wss.on("connection", (socket) => {
         sendError(socket, "Lobby is full.");
         return;
       }
+      if (isReconnect && seatTaken(lobby, id) && !(ctx.code === code && ctx.playerId === id)) {
+        sendError(socket, "That seat is already connected in another tab.");
+        return;
+      }
       // rejoining the same seat must not delete it first (leaveCurrent would)
       if (!(isReconnect && ctx.code === code && ctx.playerId === id)) leaveCurrent(socket);
       const taken2 = new Set([...lobby.players.values()].filter((p) => p.id !== id).map((p) => p.color));
@@ -1061,6 +1215,9 @@ wss.on("connection", (socket) => {
         p.trail = look2.trail;
         p.spectate = false;
         p.ready = false;
+        p.fleeBoostUntil = 0;
+        p.frozenUntil = 0;
+        p.unfreezeNextAt = 0;
         p.lastActiveAt = Date.now();
         lobby.sockets.set(id, socket);
       } else {
@@ -1093,6 +1250,9 @@ wss.on("connection", (socket) => {
           frozen: false,
           spectate: false,
           ready: false,
+          fleeBoostUntil: 0,
+          frozenUntil: 0,
+          unfreezeNextAt: 0,
           lastActiveAt: Date.now(),
         });
         lobby.sockets.set(id, socket);
@@ -1112,6 +1272,7 @@ wss.on("connection", (socket) => {
       p.color = look.color;
       p.shape = look.shape;
       p.trail = look.trail;
+      p.lastActiveAt = Date.now();
       broadcastLobby(lobby);
     } else if (msg.t === "updateSettings") {
       if (!ctx.code) return;
@@ -1141,6 +1302,7 @@ wss.on("connection", (socket) => {
         sendError(socket, "Only the leader can start.");
         return;
       }
+      if (hitRateLimit(socket, "startGame")) return;
       const isRestart = lobby.state === "playing" && (lobby.winnerId || lobby.winTeam);
       if (lobby.state !== "waiting" && !isRestart) return;
       const seated = [...lobby.players.values()].filter((p) => !p.spectate);
@@ -1185,6 +1347,9 @@ wss.on("connection", (socket) => {
         p.keys = {};
         p.moveVec = null;
         p.frozen = false;
+        p.fleeBoostUntil = 0;
+        p.frozenUntil = 0;
+        p.unfreezeNextAt = 0;
         p.dashUntil = 0;
         p.dashCharges = DASH_MAX_CHARGES;
         p.dashNextAt = 0;
@@ -1227,6 +1392,10 @@ wss.on("connection", (socket) => {
       if (!lobby) return;
       if (lobby.leaderId !== ctx.playerId) {
         sendError(socket, "Only the leader can add bots.");
+        return;
+      }
+      if (hitRateLimit(socket, "addBot")) {
+        sendError(socket, "Slow down — too many bot adds.");
         return;
       }
       if (!lobby.settings.allowBots) {
@@ -1337,6 +1506,8 @@ if (require.main === module) {
 module.exports = {
   server,
   tickTimer,
+  hbTimer,
+  shutdown,
   lobbies,
   makeCode,
   cleanName,
@@ -1347,6 +1518,10 @@ module.exports = {
   selectBotTarget,
   thinkBot,
   makeBotPlayer,
+  tryDash,
+  regenDash,
+  resetForStart,
+  removePlayer,
   isTagTouch,
   classicTagTarget,
   classicTimeWinner,
@@ -1355,6 +1530,9 @@ module.exports = {
   DEFAULT_SETTINGS,
   CLASSIC_DURATION_MS,
   FREEZE_DURATION_MS,
+  IDLE_AFTER_MS,
+  IDLE_KICK_MS,
+  HUMAN_FLEE_BOOST_MULT,
   AVOID_MS,
   STICKY_MS,
   SWITCH_MARGIN,

@@ -8,15 +8,15 @@ You must create or join a lobby. There is no quick play.
 
 ## Try with two tabs
 
-1. `npm install` then `node server.js` (`npm run dev` is the same, `npm test` runs 6 unit tests, `npm run check` syntax-checks `server.js`/`client.js`/tests)
+1. `npm install` then `node server.js` (`npm run dev` is the same, `npm test` runs 15 unit tests, `npm run check` syntax-checks `server.js`/`client.js`/tests)
 2. Open `http://localhost:3000` (`GET /healthz` returns `{ok:true, lobbies:n}` for hosts/load-balancers)
 3. Tab A: set name, color, shape, trail. Keep default settings (tags to win 10). Press Create lobby. You are leader. Note the lobby code.
 4. Tab B: set a different name and look. Enter the code, press Join. Both tabs land in the same waiting room.
-5. Both tabs press Ready up. Tab A (leader) presses Start game.
-6. Move with WASD or arrows. On touch, drag on the arena. Space or the Dash button to dash (2 charges, 4s regen). If IT touches you, you become IT. First to 10 tags wins.
-7. Leader can End game back to waiting, kick players, add or remove bots (adding bots is leader-only). Spectators who joined mid-game auto-join next round. If your socket drops (e.g. Render wake), the client auto-rejoins the same seat.
+5. Non-leaders press Ready up. Tab A (leader) presses Start game.
+6. Move with WASD or arrows. On touch, drag on the arena. Space or the Dash button to dash (2 charges, 3s regen by default). If IT touches you, you become IT. First to 10 tags wins.
+7. Leader can End game back to waiting, kick players, add or remove bots (adding bots is leader-only). Spectators who joined mid-game auto-join next round (both via End and via Play again). If your socket drops (e.g. Render wake), the client auto-rejoins the same seat.
 
-Solo: create a lobby, press Add bot, Ready up, then Start.
+Solo: create a lobby, press Add bot, then Start (leader is auto-ready; no need to ready up).
 
 ## Modes
 
@@ -41,21 +41,21 @@ Leader manages bots with Add bot (pick Easy, Medium, or Hard, max 3, counts towa
 
 ## Controls
 
-- Move: WASD or arrow keys. Touch: drag on the arena (a joystick ring shows where you grabbed). Dash: Space, Shift, or Dash button. 160ms burst at 3.1x speed, 2 charges, one regen every 4s (or per lobby dash setting). The footer shows dash pips plus a refill bar (green ready, red refilling, black while dashing). Dashing players get a white outline and a bright streak.
+- Move: WASD or arrow keys. Touch: drag on the arena (a joystick ring shows where you grabbed, half-drag = half speed). Dash: Space, Shift, or Dash button. 160ms burst at 3.1x speed, 2 charges, one regen per lobby dash setting (default 3s, sequential). The footer shows dash pips plus a refill bar (green ready, red refilling, black while dashing). Dashing players get a white outline and a bright streak. Old IT gets a brief 1.18x flee boost after a tag.
 - Landing: name, color (8), shape (circle, square, triangle), trail (none, dots, line). Create with settings, or join by code. Follow the 3 steps on the page.
 - Waiting: press Ready up, leader edits settings and starts when everyone is ready. Anyone can edit their own look. Leader can kick and add or remove bots.
 - Game: YOU marker above your own character, frozen players are gray with a FROZEN label. Leader can end back to lobby. Sound and trail toggles are in the top bar.
 
 ## How the netcode works
 
-- WebSocket via `ws` (`maxPayload: 8KB`, unknown message types dropped, `input` rate-limited to one per 20ms and fully validated). Client builds the URL with `location.origin.replace("http","ws")`.
-- Server keeps `lobbies: Map<code, {leaderId, state, settings, players, sockets}>`. Codes start at 4 chars and grow to 6 on collision. Lobbies expire after 3 hours. Human names starting with "bot" are reset to Player.
-- Waiting: server sends `{t:"lobby", ...}` on every change. Playing: server ticks at 30Hz and sends `{t:"state", ...}`. Bots think on their reaction clock and steer every tick.
-- Server is authoritative. Clients send `{t:"input", keys, moveVec, dash}` at 20Hz. Server moves at `settings.speed`, clamps to arena, checks tags by distance with `settings.cooldownMs` and a 200ms post-dash grace for the dasher, increments `tags`, sets `winnerId` at `settings.tagsToWin` (0 is endless). Tag helpers (`isTagTouch`, `classicTagTarget`, `freezeOutcome`) live in `server.js` and are covered by `test/game.test.js`.
-- Identity is a random id in `sessionStorage`, so two tabs stay two players. Last lobby code is also kept in `sessionStorage`, so a dropped socket auto-rejoins the same seat on reconnect.
-- Mid-game joins become spectators (max 4) and auto-join as players on End. Leader migrates to oldest human on leave. Empty lobbies are deleted.
-- Trails and the joystick ring are client-side. Shapes are drawn on canvas per player. Winner banner is built with `textContent`, never `innerHTML`, so player names cannot inject markup.
-- Files: `server.js` (authoritative sim + lobby netcode, exports pure helpers when required), `client.js` (UI + canvas), `styles.css`, `index.html` (shell), `test/game.test.js` (6 tests).
+- WebSocket via `ws` (`maxPayload: 8KB`, unknown message types dropped, `input` rate-limited to one per 20ms and fully validated, `createLobby`/`joinLobby`/`addBot`/`startGame` per-socket rate-limited). Client builds the URL from `location.protocol` (`wss:` on https). Heartbeat ping/pong every 30s drops half-open sockets.
+- Server keeps `lobbies: Map<code, {leaderId, state, settings, players, sockets}>`. Codes are 5-6 chars (`crypto.randomInt`) and grow on collision. Lobbies expire after 3 hours. Idle humans are kicked after 2 minutes. Human names starting with "bot" (any casing) are reset to Player. Live seats cannot be hijacked: reconnect with the same id is rejected while the old socket is still open.
+- Waiting: server sends `{t:"lobby", ...}` on every change. Playing: server ticks at 30Hz with clamped real-dt and sends `{t:"state", ...}`. One bad lobby throws inside try/catch so it can't kill the others. Bots think on their reaction clock and steer every tick.
+- Server is authoritative. Clients send `{t:"input", keys, moveVec, dash}` at 20Hz. Server moves at `settings.speed`, preserves analog touch magnitude (<=1), clamps to arena, checks tags by distance with `settings.cooldownMs` and a 200ms post-dash grace for the dasher, increments `tags`, sets `winnerId` at `settings.tagsToWin` (0 is endless). Tag helpers (`isTagTouch`, `classicTagTarget`, `freezeOutcome`) live in `server.js` and are covered by `test/game.test.js`. Freeze needs every active runner (humans and bots) frozen; unfreeze is rate-limited per rescuer with brief grace for the rescued.
+- Identity is a random id in `sessionStorage`, so two tabs stay two players. Last lobby code is also kept in `sessionStorage`, so a dropped socket auto-rejoins the same seat on reconnect (cleared on "not found" so stale codes don't retry forever).
+- Mid-game joins become spectators (max 4) and auto-join as players on End or Play again. Leader migrates to oldest human on leave. New IT after a leave gets a fresh tag cooldown. Empty lobbies are deleted. Graceful `SIGTERM`/`SIGINT` shutdown closes sockets first.
+- Trails and the joystick ring are client-side. Shapes are drawn on canvas per player. Winner banner is built with `textContent`, never `innerHTML`, so player names cannot inject markup. Spectators are never drawn.
+- Files: `server.js` (authoritative sim + lobby netcode, exports pure helpers when required), `client.js` (UI + canvas), `styles.css`, `index.html` (shell), `test/game.test.js` (15 tests).
 
 ## Settings (leader, waiting room only)
 

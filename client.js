@@ -50,9 +50,22 @@ function show(which) {
   if (which==="landing") $("roomLabel").textContent = "lobby select";
 }
 
+function wsUrl() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  return proto + "//" + location.host;
+}
+
+function resetRoundUiState() {
+  lastMyTags = 0;
+  lastWinnerSeen = false;
+  for (const k of Object.keys(lastDashingMap)) delete lastDashingMap[k];
+  renderPos = {};
+  trailHist = {};
+}
+
 function connect() {
   setConn(null, "connecting");
-  socket = new WebSocket(location.origin.replace("http","ws"));
+  socket = new WebSocket(wsUrl());
   socket.addEventListener("open", ()=> {
     setConn(true,"connected");
     // Auto-rejoin after a drop / Render wake: re-announce the same seat.
@@ -68,18 +81,24 @@ function connect() {
   socket.addEventListener("message", (e)=>{
     let m; try { m = JSON.parse(e.data); } catch { return; }
     if (m.t==="lobby") {
+      if (!lobby || lobby.code !== m.code) resetRoundUiState();
       lobby = m; game = null;
       try { sessionStorage.setItem("tag-lobby", m.code); } catch {}
       renderWaiting(); show("waiting");
     }
     else if (m.t==="state") {
+      if (!game || game.code !== m.code) resetRoundUiState();
       game = m; lobby = m;
       try { sessionStorage.setItem("tag-lobby", m.code); } catch {}
       renderGame(); show("game");
     }
-    else if (m.t==="error") showError(m.msg);
-    else if (m.t==="kicked") { lobby=null; game=null; try { sessionStorage.removeItem("tag-lobby"); } catch {} showError("You were kicked."); show("landing"); }
-    else if (m.t==="left") { lobby=null; game=null; try { sessionStorage.removeItem("tag-lobby"); } catch {} show("landing"); }
+    else if (m.t==="error") {
+      showError(m.msg);
+      // Stale invite/reconnect codes otherwise retry forever on every reconnect.
+      if (/not found/i.test(m.msg)) { try { sessionStorage.removeItem("tag-lobby"); } catch {} }
+    }
+    else if (m.t==="kicked") { lobby=null; game=null; resetRoundUiState(); try { sessionStorage.removeItem("tag-lobby"); } catch {} showError("You were kicked."); show("landing"); }
+    else if (m.t==="left") { lobby=null; game=null; resetRoundUiState(); try { sessionStorage.removeItem("tag-lobby"); } catch {} show("landing"); }
   });
 }
 
@@ -340,6 +359,8 @@ function renderGame(){
       bar.style.width = "0%";
       bar.className = "cool";
       pips.innerHTML = "";
+      const btn = $("dashBtn");
+      if (btn) btn.disabled = true;
     } else {
     pips.innerHTML = "";
     for (let i = 0; i < max; i++) {
@@ -489,7 +510,9 @@ function drawGrid(){
 }
 function draw(){
   drawGrid();
-  const list = game?game.players:(lobby?lobby.players:[]);
+  const rawList = game?game.players:(lobby?lobby.players:[]);
+  // Spectators live at -100,-100 and must never render or leave trails.
+  const list = rawList.filter(p=>!p.spectate);
   for(const p of list){
     if(!renderPos[p.id]){renderPos[p.id]={x:p.x,y:p.y};trailHist[p.id]=[];}
     renderPos[p.id].x+=(p.x-renderPos[p.id].x)*0.3;
