@@ -38,6 +38,7 @@
   .gap-b { margin-bottom: 16px; }
   .push-top { margin-top: 10px; }
   .flush { margin: 0; }
+  .row-disabled { opacity: 0.45; }
   #lockHint { margin-top: 0; }
   #invite { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
   .layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; }

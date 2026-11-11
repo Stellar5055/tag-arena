@@ -120,6 +120,12 @@ function currentSettings() {
     gameMode: $("s-mode").value,
   };
 }
+// Points race is classic-only: grey out the target when freeze is picked.
+function syncTargetRow() {
+  const freeze = $("s-mode").value === "freeze";
+  $("s-win").disabled = freeze;
+  $("s-winrow").classList.toggle("row-disabled", freeze);
+}
 
 // pickers
 function buildPickers() {
@@ -161,6 +167,7 @@ $("join").onclick = ()=>{
   send({ t:"joinLobby", code, id: myId, name: profile.name, look:{color:profile.color,shape:profile.shape,trail:profile.trail} });
 };
 $("code").addEventListener("keydown",(e)=>{ if(e.key==="Enter") $("join").click(); });
+$("s-mode").addEventListener("change", syncTargetRow);
 
 ["w-max","w-win","w-speed","w-cool","w-arena","w-bots","w-dash","w-mode"].forEach(id=>{
   $(id).addEventListener("change", ()=>{
@@ -260,6 +267,10 @@ function renderWaiting(){
   $("w-bots").value=lobby.settings.allowBots?"on":"off";
   $("w-dash").value=String(lobby.settings.dashCdMs ?? 3000);
   $("w-mode").value=lobby.settings.gameMode || "classic";
+  // Points race is classic-only: freeze lobbies ignore the target.
+  const freezePicked = (lobby.settings.gameMode || "classic") === "freeze";
+  $("w-win").disabled = !isLead || freezePicked;
+  $("w-winrow").classList.toggle("row-disabled", freezePicked);
   const ul=$("wplayers"); ul.innerHTML="";
   const seated = lobby.players.filter(p=>!p.spectate);
   seated.forEach(p=>ul.appendChild(playerRow(p,true,isLead)));
@@ -660,6 +671,7 @@ function draw(){
   if(q) $("code").value=q.toUpperCase();
   buildPickers();
   syncPrefButtons();
+  syncTargetRow();
   connect();
   draw();
 })();

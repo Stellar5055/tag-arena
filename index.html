@@ -50,7 +50,7 @@
       <div class="body">
         <div class="row2">
           <div><label class="small">Max players</label><select id="s-max"><option>2</option><option>3</option><option>4</option><option>5</option><option selected>6</option><option>7</option><option>8</option></select></div>
-          <div><label class="small">Points to win</label><select id="s-win"><option value="750">750</option><option value="1500" selected>1500</option><option value="3000">3000</option><option value="0">Timed only</option></select></div>
+          <div id="s-winrow"><label class="small">Points to win</label><select id="s-win"><option value="750">750</option><option value="1500" selected>1500</option><option value="3000">3000</option><option value="0">Timed only</option></select></div>
         </div>
         <div class="row2">
           <div><label class="small">Speed</label><select id="s-speed"><option value="200">Slow</option><option value="260" selected>Normal</option><option value="320">Fast</option></select></div>
@@ -133,7 +133,7 @@
         <div class="body">
           <p class="hint" id="lockHint">Only the leader can edit.</p>
           <label class="small">Max players</label><select id="w-max"><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option></select>
-          <label class="small">Points to win</label><select id="w-win"><option value="750">750</option><option value="1500">1500</option><option value="3000">3000</option><option value="0">Timed only</option></select>
+          <div id="w-winrow"><label class="small">Points to win</label><select id="w-win"><option value="750">750</option><option value="1500">1500</option><option value="3000">3000</option><option value="0">Timed only</option></select></div>
           <label class="small">Speed</label><select id="w-speed"><option value="200">Slow</option><option value="260">Normal</option><option value="320">Fast</option></select>
           <label class="small">Tag cooldown</label><select id="w-cool"><option value="500">0.5s</option><option value="1000">1s</option><option value="2000">2s</option></select>
           <label class="small">Arena</label><select id="w-arena"><option value="small">Small</option><option value="classic">Classic</option><option value="large">Large</option></select>
