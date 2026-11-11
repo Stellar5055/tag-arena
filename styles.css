@@ -94,11 +94,19 @@
     #dashBtn { min-height: 56px; font-size: 15px; }
     .btn-row button, .btn-stack button { min-height: 44px; }
   }
-  #winner { display: none; margin: 0; padding: 12px 14px; border-bottom: 2px solid var(--line); background: var(--accent-soft); }
+  #winner { display: none; margin: 0; border-bottom: 2px solid var(--line); background: var(--panel); }
   #winner.show { display: block; }
-  #winBoard { margin: 8px 0 4px; padding-left: 24px; font-size: 14px; }
-  #winBoard li { margin-bottom: 3px; }
-  #winBoard li.won { font-weight: 700; }
+  #winnerText { display: block; padding: 10px 14px; background: #efe9dc; border-bottom: 2px solid var(--line); font-size: 15px; }
+  #winnerText b { margin-right: 6px; }
+  #winnerText span { color: var(--muted); font-size: 13px; }
+  #winBoard { list-style: none; margin: 0; padding: 0; }
+  #winBoard li { display: flex; align-items: center; gap: 9px; padding: 7px 14px; border-bottom: 1px solid #e3ddcf; font-size: 14px; }
+  #winBoard li:last-child { border-bottom: 0; }
+  #winBoard li.won { background: #fff8db; box-shadow: inset 3px 0 0 var(--accent); }
+  #winBoard .rank { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--muted); width: 24px; flex: none; letter-spacing: 0.06em; }
+  #winBoard li.won .rank { color: var(--accent); font-weight: 700; }
+  #winBoard .badge.win { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #winner .btn-row { padding: 10px 14px; }
 
   #error { display: none; max-width: 1080px; margin: 12px auto 0; padding: 9px 14px; border: 2px solid var(--accent); background: var(--accent-soft); font-size: 14px; }
   #error.show { display: block; }

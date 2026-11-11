@@ -438,6 +438,7 @@ function renderGame(){
     }
     wt.append(head, detail);
     // Final standings, textContent-built so names cannot inject markup.
+    // Styled like the player lists: rank + swatch + shape + name + tags + badges.
     const board = $("winBoard");
     board.textContent = "";
     let topTags = 0;
@@ -446,8 +447,40 @@ function renderGame(){
       const li = document.createElement("li");
       const isWon = game.winTeam === "draw" ? (p.tags || 0) === topTags : p.id === game.winnerId;
       if (isWon) li.className = "won";
-      li.textContent = (i + 1) + ". " + p.name + " — " + (p.tags || 0) + " tags" +
-        (isWon ? " (winner)" : "") + (p.id === myId ? " (you)" : "") + (p.bot ? " [bot]" : "");
+      const rank = document.createElement("span");
+      rank.className = "rank";
+      rank.textContent = String(i + 1).padStart(2, "0");
+      const sw = document.createElement("span");
+      sw.className = "swatch";
+      sw.style.background = p.color;
+      const sh = document.createElement("span");
+      sh.className = "shape-ico";
+      sh.textContent = p.shape === "square" ? "S" : p.shape === "triangle" ? "T" : "O";
+      const nm = document.createElement("span");
+      nm.className = "pname";
+      nm.textContent = p.name;
+      const tg = document.createElement("span");
+      tg.className = "tags";
+      tg.textContent = (p.tags || 0) + " tags";
+      li.append(rank, sw, sh, nm, tg);
+      if (isWon) {
+        const b = document.createElement("span");
+        b.className = "badge win";
+        b.textContent = game.winTeam === "draw" ? "tied" : "winner";
+        li.appendChild(b);
+      }
+      if (p.id === myId) {
+        const b = document.createElement("span");
+        b.className = "badge you";
+        b.textContent = "you";
+        li.appendChild(b);
+      }
+      if (p.bot) {
+        const b = document.createElement("span");
+        b.className = "badge";
+        b.textContent = p.difficulty || "bot";
+        li.appendChild(b);
+      }
       board.appendChild(li);
     });
     $("again").style.display = game.leaderId===myId ? "" : "none";
