@@ -13,6 +13,9 @@ const {
   regenDash,
   resetForStart,
   removePlayer,
+  leaveCurrent,
+  sweepGone,
+  RECONNECT_GRACE_MS,
   publicPlayers,
   selectBotTarget,
   thinkBot,
@@ -163,6 +166,14 @@ test("accruePoints: runners gain, IT bleeds, frozen/spectating accrue nothing", 
   const spec = { id: "s", it: false, frozen: false, spectate: true, pts: 100 };
   accruePoints(spec, dt);
   assert.equal(spec.pts, 100);
+
+  // Gone players accrue nothing either way.
+  const gone = { id: "g", it: false, frozen: false, spectate: false, goneAt: Date.now(), pts: 100 };
+  accruePoints(gone, dt);
+  assert.equal(gone.pts, 100);
+  const goneIt = { id: "gi", it: true, frozen: false, spectate: false, goneAt: Date.now(), pts: 100 };
+  accruePoints(goneIt, dt);
+  assert.equal(goneIt.pts, 100);
 
   // Symmetric rates: a full IT/runner swap nets zero (fair exchange).
   const x = { id: "x", it: false, frozen: false, spectate: false, pts: 0 };
@@ -336,6 +347,47 @@ test("resetForStart auto-joins spectators (Play again parity with End)", () => {
   assert.equal(s.pts, 0);
   assert.equal(lobby.players.get("a").pts, 0);
   assert.ok(s.x >= 0 && s.y >= 0);
+});
+
+test("disconnect grace holds the seat, then sweep frees it", () => {
+  const lobby = {
+    code: "GRACE1", leaderId: "a", state: "waiting", settings: cleanSettings({}),
+    players: new Map(), sockets: new Map(),
+    tagCooldownUntil: 0, winnerId: null, winTeam: null, endsAt: 0, createdAt: Date.now(),
+  };
+  const mk = (id) => ({
+    id, name: id, color: "#fff", shape: "circle", trail: "none",
+    x: 0, y: 0, vx: 0, vy: 0, lastX: 0, lastY: 0, keys: {}, moveVec: null,
+    it: false, bot: false, tags: 0, pts: 0, goneAt: 0, ready: true, lastActiveAt: Date.now(),
+  });
+  lobby.players.set("a", mk("a"));
+  lobby.players.set("b", mk("b"));
+  const sockA = { ctx: { code: "GRACE1", playerId: "a" } };
+  lobby.sockets.set("a", sockA);
+  lobby.sockets.set("b", { ctx: { code: "GRACE1", playerId: "b" } });
+  lobbies.set("GRACE1", lobby);
+  try {
+    // Unexpected drop: seat held, socket dropped, marked gone.
+    leaveCurrent(sockA);
+    assert.ok(lobby.players.has("a"), "seat held");
+    assert.ok(lobby.players.get("a").goneAt > 0, "marked gone");
+    assert.ok(!lobby.sockets.has("a"), "dead socket removed");
+    // Within grace: sweep keeps the seat.
+    assert.equal(sweepGone(lobby, Date.now()), false);
+    assert.ok(lobby.players.has("a"));
+    // After grace: swept (lobby survives: human b remains).
+    lobby.players.get("a").goneAt = Date.now() - RECONNECT_GRACE_MS - 1000;
+    assert.equal(sweepGone(lobby, Date.now()), true);
+    assert.ok(!lobby.players.has("a"));
+    assert.ok(lobbies.has("GRACE1"));
+    // Explicit leave frees immediately, no grace.
+    const sockB = lobby.sockets.get("b");
+    leaveCurrent(sockB, true);
+    assert.ok(!lobby.players.has("b"));
+    assert.ok(!lobbies.has("GRACE1"), "last human out deletes lobby");
+  } finally {
+    lobbies.delete("GRACE1");
+  }
 });
 
 test("removePlayer sets a tag cooldown when reassigning IT", () => {

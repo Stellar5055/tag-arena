@@ -152,6 +152,7 @@ function publicPlayers(lobby) {
       dashCdTotal: dashOff ? 0 : dashRegenMs(lobby, p),
       frozen: !!p.frozen,
       spectate: !!p.spectate,
+      away: !!p.goneAt,
       ready: !!p.ready,
       idle: !p.bot && !p.spectate && now - (p.lastActiveAt || now) > IDLE_AFTER_MS,
     };
@@ -301,7 +302,7 @@ function freezeOutcome(players, itPlayer, timerExpired) {
 // Points scoring (classic mode). Runners gain, IT bleeds, frozen and
 // spectating players accrue nothing. Pure (exported for tests).
 function accruePoints(p, dt) {
-  if (!p || p.spectate) return;
+  if (!p || p.spectate || p.goneAt) return;
   if (p.it) p.pts = (p.pts || 0) - POINTS_LOSE_PER_SEC * dt;
   else if (!p.frozen) p.pts = (p.pts || 0) + POINTS_GAIN_PER_SEC * dt;
 }
@@ -350,6 +351,7 @@ function makeBotPlayer(lobby, botsCount, difficulty) {
     difficulty: diff,
     tags: 0,
     pts: 0,
+    goneAt: 0,
     wobble: Math.random() * 10,
     thinkAt: 0,
     tx: pos.x,
@@ -738,10 +740,14 @@ const tickTimer = setInterval(() => {
       lobbies.delete(lobby.code);
       continue;
     }
+    // Reconnect grace expiry + idle sweep. Gone players are removed after
+    // RECONNECT_GRACE_MS so a fast reload keeps its seat; AFK players with
+    // live sockets are kicked after IDLE_KICK_MS. Bots never idle.
+    if (sweepGone(lobby, now) && !lobbies.has(lobby.code)) continue;
     // Idle sweep: AFK humans squat seats and block maxPlayers/ready.
-    // Bots never idle. Kicked players get a message when their socket is live.
+    // Kicked players get a message when their socket is live.
     for (const [pid, p] of [...lobby.players.entries()]) {
-      if (p.bot) continue;
+      if (p.bot || p.goneAt) continue;
       if (now - (p.lastActiveAt || now) > IDLE_KICK_MS) {
         const ws = lobby.sockets.get(pid);
         if (ws) send(ws, { t: "error", msg: "Kicked for being idle over 2 minutes." });
@@ -989,8 +995,20 @@ function heartbeat() {
 const hbTimer = setInterval(heartbeat, 30000);
 if (hbTimer.unref) hbTimer.unref();
 
+// Waiting/finished lobbies don't run the playing tick, so expired
+// disconnect grace would otherwise squat seats until the 3h TTL.
+const sweepTimer = setInterval(() => {
+  const now = Date.now();
+  for (const lobby of lobbies.values()) {
+    if (lobby.state === "playing" && !lobby.winnerId && !lobby.winTeam) continue;
+    if (sweepGone(lobby, now) && lobbies.has(lobby.code)) broadcastLobby(lobby);
+  }
+}, 15000);
+if (sweepTimer.unref) sweepTimer.unref();
+
 function shutdown() {
   clearInterval(tickTimer);
+  clearInterval(sweepTimer);
   clearInterval(hbTimer);
   try {
     for (const ws of wss.clients) try { ws.close(1001, "server shutting down"); } catch {}
@@ -1045,7 +1063,25 @@ function seatTaken(lobby, playerId) {
   return !!ws && ws.readyState === WebSocket.OPEN;
 }
 
-function leaveCurrent(socket) {
+// Disconnect grace: a dropped socket (refresh, sleep, Render wake) keeps
+// its seat for RECONNECT_GRACE_MS so a fast reload rejoins the same seat
+// instead of becoming a spectator. Explicit Leave kicks immediately.
+const RECONNECT_GRACE_MS = 45000;
+
+function sweepGone(lobby, now) {
+  let changed = false;
+  for (const [pid, p] of [...lobby.players.entries()]) {
+    if (p.bot || !p.goneAt) continue;
+    if (now - p.goneAt > RECONNECT_GRACE_MS) {
+      removePlayer(lobby, pid);
+      changed = true;
+      if (!lobbies.has(lobby.code)) break;
+    }
+  }
+  return changed;
+}
+
+function leaveCurrent(socket, immediate) {
   const ctx = socket.ctx;
   if (!ctx || !ctx.code) return;
   const lobby = lobbies.get(ctx.code);
@@ -1053,12 +1089,20 @@ function leaveCurrent(socket) {
   if (!lobby) return;
   // a refreshed tab leaves a stale socket behind: never evict the fresh connection
   if (ctx.playerId && lobby.sockets.get(ctx.playerId) !== socket) return;
-  if (ctx.playerId && lobby.players.has(ctx.playerId) && !lobby.players.get(ctx.playerId).bot) {
+  const p = ctx.playerId && lobby.players.get(ctx.playerId);
+  if (!p || p.bot) return;
+  lobby.sockets.delete(ctx.playerId);
+  if (immediate) {
     removePlayer(lobby, ctx.playerId);
-    if (lobbies.has(lobby.code)) {
-      if (lobby.state === "playing") broadcastState(lobby);
-      else broadcastLobby(lobby);
-    }
+  } else {
+    // Unexpected drop: hold the seat briefly for auto-rejoin.
+    p.goneAt = Date.now();
+    p.keys = {};
+    p.moveVec = null;
+  }
+  if (lobbies.has(lobby.code)) {
+    if (lobby.state === "playing") broadcastState(lobby);
+    else broadcastLobby(lobby);
   }
 }
 
@@ -1124,7 +1168,8 @@ wss.on("connection", (socket) => {
         it: false,
         bot: false,
         tags: 0,
-    pts: 0,
+        pts: 0,
+        goneAt: 0,
         wobble: Math.random() * 10,
         dashUntil: 0,
         dashCharges: DASH_MAX_CHARGES,
@@ -1171,6 +1216,8 @@ wss.on("connection", (socket) => {
             return;
           }
           const p = lobby.players.get(id);
+          p.goneAt = 0;
+          p.lastActiveAt = Date.now();
           lobby.sockets.set(id, socket);
           socket.ctx = { code, playerId: id };
           if (lobby.state === "playing") broadcastState(lobby);
@@ -1202,7 +1249,8 @@ wss.on("connection", (socket) => {
           it: false,
           bot: false,
           tags: 0,
-    pts: 0,
+          pts: 0,
+          goneAt: 0,
           wobble: Math.random() * 10,
           dashUntil: 0,
           dashCharges: DASH_MAX_CHARGES,
@@ -1254,6 +1302,7 @@ wss.on("connection", (socket) => {
         p.fleeBoostUntil = 0;
         p.frozenUntil = 0;
         p.unfreezeNextAt = 0;
+        p.goneAt = 0;
         p.lastActiveAt = Date.now();
         lobby.sockets.set(id, socket);
       } else {
@@ -1274,7 +1323,8 @@ wss.on("connection", (socket) => {
           it: false,
           bot: false,
           tags: 0,
-    pts: 0,
+          pts: 0,
+          goneAt: 0,
           wobble: Math.random() * 10,
           dashUntil: 0,
           dashCharges: DASH_MAX_CHARGES,
@@ -1479,7 +1529,7 @@ wss.on("connection", (socket) => {
         else broadcastLobby(lobby);
       }
     } else if (msg.t === "leaveLobby") {
-      leaveCurrent(socket);
+      leaveCurrent(socket, true);
       send(socket, { t: "left" });
     } else if (msg.t === "input") {
       if (!ctx.code) return;
@@ -1560,6 +1610,9 @@ module.exports = {
   regenDash,
   resetForStart,
   removePlayer,
+  leaveCurrent,
+  sweepGone,
+  RECONNECT_GRACE_MS,
   isTagTouch,
   classicTagTarget,
   classicPointsWinner,

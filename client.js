@@ -120,11 +120,11 @@ function currentSettings() {
     gameMode: $("s-mode").value,
   };
 }
-// Points race is classic-only: grey out the target when freeze is picked.
+// Points race is classic-only: the target row hides entirely in freeze.
 function syncTargetRow() {
   const freeze = $("s-mode").value === "freeze";
+  $("s-winrow").style.display = freeze ? "none" : "";
   $("s-win").disabled = freeze;
-  $("s-winrow").classList.toggle("row-disabled", freeze);
 }
 
 // pickers
@@ -245,6 +245,7 @@ function playerRow(p, isLead, canKick){
   if (p.spectate){ const b=document.createElement("span"); b.className="badge"; b.textContent="watching"; li.appendChild(b); }
   if (!p.bot && !p.spectate && p.ready){ const t=document.createElement("span"); t.className="tags"; t.textContent="· ready"; li.appendChild(t); }
   if (p.idle){ const t=document.createElement("span"); t.className="tags"; t.textContent="· idle"; li.appendChild(t); }
+  if (p.away){ const t=document.createElement("span"); t.className="tags"; t.textContent="· reconnecting"; li.appendChild(t); }
   if (canKick && p.id!==myId){
     if (p.bot) {
       const k=document.createElement("button"); k.className="kick"; k.textContent="remove";
@@ -291,10 +292,10 @@ function renderWaiting(){
   $("w-bots").value=lobby.settings.allowBots?"on":"off";
   $("w-dash").value=String(lobby.settings.dashCdMs ?? 3000);
   $("w-mode").value=lobby.settings.gameMode || "classic";
-  // Points race is classic-only: freeze lobbies ignore the target.
+  // Points race is classic-only: the target row hides entirely in freeze.
   const freezePicked = (lobby.settings.gameMode || "classic") === "freeze";
+  $("w-winrow").style.display = freezePicked ? "none" : "";
   $("w-win").disabled = !isLead || freezePicked;
-  $("w-winrow").classList.toggle("row-disabled", freezePicked);
   // Bot management is leader-only and hidden entirely when bots are off.
   $("wbotrow").style.display = (!isLead || !lobby.settings.allowBots) ? "none" : "";
   const ul=$("wplayers"); ul.innerHTML="";
@@ -562,7 +563,7 @@ function renderGame(){
   // Slim roster: rank + swatch + name + pts, plus you/frozen markers and the
   // leader's bot-remove. Tags, idle, difficulty and the IT badge are gone:
   // the arena (ring + labels) already shows who's IT.
-  const rosterSig = sorted.map(p=>[p.id,p.pts,p.it,p.frozen,p.color,p.name].join(":")).join("|") +
+  const rosterSig = sorted.map(p=>[p.id,p.pts,p.it,p.frozen,p.away,p.color,p.name].join(":")).join("|") +
     "|" + game.players.filter(p=>p.spectate).map(p=>p.id+":"+p.name).join("|") +
     "|" + game.leaderId + "|" + myId;
   if (rosterSig !== lastRosterSig) {
@@ -578,6 +579,7 @@ function renderGame(){
     li.append(sw,nm);
     const pt=document.createElement("span");pt.className="pts";pt.textContent=(p.pts||0)+" pts";li.appendChild(pt);
     if(p.frozen){const b=document.createElement("span");b.className="badge";b.textContent="frozen";li.appendChild(b);}
+    if(p.away){const t=document.createElement("span");t.className="tags";t.textContent="· reconnecting";li.appendChild(t);}
     if(p.id===myId){const b=document.createElement("span");b.className="badge you";b.textContent="you";li.appendChild(b);}
     if (isLeadGame && p.bot) {
       const k=document.createElement("button");k.className="kick";k.textContent="remove";
