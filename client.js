@@ -111,7 +111,7 @@ function send(o){ if (socket && socket.readyState===WebSocket.OPEN) socket.send(
 function currentSettings() {
   return {
     maxPlayers: parseInt($("s-max").value,10),
-    tagsToWin: parseInt($("s-win").value,10),
+    pointsToWin: parseInt($("s-win").value,10),
     speed: parseInt($("s-speed").value,10),
     cooldownMs: parseInt($("s-cool").value,10),
     arena: $("s-arena").value,
@@ -168,7 +168,7 @@ $("code").addEventListener("keydown",(e)=>{ if(e.key==="Enter") $("join").click(
     if (lobby.leaderId!==myId) return;
     send({ t:"updateSettings", settings:{
       maxPlayers: parseInt($("w-max").value,10),
-      tagsToWin: parseInt($("w-win").value,10),
+      pointsToWin: parseInt($("w-win").value,10),
       speed: parseInt($("w-speed").value,10),
       cooldownMs: parseInt($("w-cool").value,10),
       arena: $("w-arena").value,
@@ -253,7 +253,7 @@ function renderWaiting(){
   $("lockHint").textContent = isLead ? "You are leader. Changes apply to everyone." : "Only the leader can edit.";
   ["w-max","w-win","w-speed","w-cool","w-arena","w-bots","w-dash","w-mode"].forEach(id=>{ $(id).disabled=!isLead; });
   $("w-max").value=String(lobby.settings.maxPlayers);
-  $("w-win").value=String(lobby.settings.tagsToWin);
+  $("w-win").value=String(lobby.settings.pointsToWin);
   $("w-speed").value=String(lobby.settings.speed);
   $("w-cool").value=String(lobby.settings.cooldownMs);
   $("w-arena").value=lobby.settings.arena;
@@ -342,20 +342,22 @@ function renderGame(){
   $("countLabel").textContent=seated.length+" players";
   const it=game.players.find(p=>p.it);
   const me=game.players.find(p=>p.id===myId);
-  const sorted=game.players.filter(p=>!p.spectate).slice().sort((a,b)=>(b.tags||0)-(a.tags||0));
   const mode = game.settings ? game.settings.gameMode : "classic";
+  const sorted = mode === "freeze"
+    ? game.players.filter(p=>!p.spectate).slice().sort((a,b)=>(b.tags||0)-(a.tags||0))
+    : game.players.filter(p=>!p.spectate).slice().sort((a,b)=>((b.pts||0)-(a.pts||0)) || ((b.tags||0)-(a.tags||0)));
   $("itLabel").textContent=it?("it: "+it.name+(it.id===myId?" (you)":"")):"";
   const fmtClock=(ms)=>{ const s=Math.ceil(ms/1000); return Math.floor(s/60)+":"+String(s%60).padStart(2,"0"); };
   if (game.timeLeft != null && !game.winnerId && !game.winTeam) {
     if (mode === "freeze") {
       $("scoreLabel").textContent = "runners " + fmtClock(game.timeLeft);
     } else {
-      const ttw=game.settings?game.settings.tagsToWin:10;
-      $("scoreLabel").textContent=(ttw>0?("first to "+ttw):"most tags")+" · "+fmtClock(game.timeLeft);
+      const ptw=game.settings?game.settings.pointsToWin:1500;
+      $("scoreLabel").textContent=(ptw>0?("first to "+ptw+" pts"):"most points")+" · "+fmtClock(game.timeLeft);
     }
   } else {
-    const ttw=game.settings?game.settings.tagsToWin:10;
-    $("scoreLabel").textContent=ttw>0?("first to "+ttw):"endless";
+    const ptw=game.settings?game.settings.pointsToWin:1500;
+    $("scoreLabel").textContent=ptw>0?("first to "+ptw+" pts"):"most points";
   }
   if (me && !me.spectate) {
     const charges = me.dashCharges ?? 2;
@@ -439,15 +441,15 @@ function renderGame(){
         (game.leaderId===myId ? "Press Play again or Back to lobby." : "Waiting for leader.");
     } else if (game.winTeam === "draw") {
       const scored = game.players.filter(p=>!p.spectate);
-      let best = 0;
-      for (const p of scored) best = Math.max(best, p.tags || 0);
-      const tied = scored.filter(p=>(p.tags||0)===best).map(p=>p.name).slice(0,3).join(", ");
-      head.textContent = "Draw — " + (tied || "nobody") + " tied at " + best + " tags.";
+      let best = -Infinity;
+      for (const p of scored) best = Math.max(best, p.pts || 0);
+      const tied = scored.filter(p=>(p.pts||0)===best).map(p=>p.name).slice(0,3).join(", ");
+      head.textContent = "Draw — " + (tied || "nobody") + " tied at " + best + " points.";
       detail.textContent = " " +
         (game.leaderId===myId ? "Press Play again or Back to lobby." : "Waiting for leader.");
     } else {
       const winp=game.players.find(p=>p.id===game.winnerId);
-      const frozenNote = mode === "freeze" ? "froze everyone" : "with "+(winp?winp.tags:0)+" tags";
+      const frozenNote = mode === "freeze" ? "froze everyone" : "with "+(winp?winp.pts:0)+" points ("+(winp?winp.tags:0)+" tags)";
       head.textContent = (winp?winp.name:"Someone")+" wins ("+frozenNote+").";
       detail.textContent = " " +
         (game.leaderId===myId ? "Press Play again or Back to lobby so others can join." : "Waiting for leader. New players can join once leader goes back to lobby.");
@@ -458,17 +460,17 @@ function renderGame(){
     // Gated on a signature: state arrives at 30Hz but standings are static
     // once the winner is set, so skip the rebuild when nothing changed.
     const boardSig = (game.winTeam || "") + "|" + (game.winnerId || "") + "|" +
-      sorted.map(p=>[p.id,p.tags,p.bot,p.difficulty,p.color,p.shape,p.name].join(":")).join("|") +
+      sorted.map(p=>[p.id,p.pts,p.tags,p.bot,p.difficulty,p.color,p.shape,p.name].join(":")).join("|") +
       "|" + game.leaderId + "|" + myId;
     if (boardSig !== lastBoardSig) {
       lastBoardSig = boardSig;
     const board = $("winBoard");
     board.textContent = "";
-    let topTags = 0;
-    for (const p of sorted) topTags = Math.max(topTags, p.tags || 0);
+    let topPts = -Infinity;
+    for (const p of sorted) topPts = Math.max(topPts, p.pts || 0);
     sorted.forEach((p, i) => {
       const li = document.createElement("li");
-      const isWon = game.winTeam === "draw" ? (p.tags || 0) === topTags : p.id === game.winnerId;
+      const isWon = game.winTeam === "draw" ? (p.pts || 0) === topPts : p.id === game.winnerId;
       if (isWon) li.className = "won";
       const rank = document.createElement("span");
       rank.className = "rank";
@@ -482,10 +484,13 @@ function renderGame(){
       const nm = document.createElement("span");
       nm.className = "pname";
       nm.textContent = p.name;
+      const pt = document.createElement("span");
+      pt.className = "pts";
+      pt.textContent = (p.pts || 0) + " pts";
       const tg = document.createElement("span");
       tg.className = "tags";
       tg.textContent = (p.tags || 0) + " tags";
-      li.append(rank, sw, sh, nm, tg);
+      li.append(rank, sw, sh, nm, pt, tg);
       if (isWon) {
         const b = document.createElement("span");
         b.className = "badge win";
@@ -523,7 +528,7 @@ function renderGame(){
   // the per-bot remove buttons unclickable (element replaced mid-click).
   // Clicks are handled by a single delegated listener on #players below,
   // so buttons keep working even across rebuilds.
-  const rosterSig = sorted.map(p=>[p.id,p.tags,p.it,p.frozen,p.idle,p.spectate,p.ready,p.color,p.shape,p.difficulty,p.bot,p.name].join(":")).join("|") +
+  const rosterSig = sorted.map(p=>[p.id,p.pts,p.tags,p.it,p.frozen,p.idle,p.spectate,p.ready,p.color,p.shape,p.difficulty,p.bot,p.name].join(":")).join("|") +
     "|" + game.players.filter(p=>p.spectate).map(p=>p.id+":"+p.name).join("|") +
     "|" + game.leaderId + "|" + myId;
   if (rosterSig !== lastRosterSig) {
@@ -535,6 +540,7 @@ function renderGame(){
     const sw=document.createElement("span");sw.className="swatch";sw.style.background=p.color;
     const nm=document.createElement("span");nm.className="pname";nm.textContent=p.bot?(p.name+" ("+(p.difficulty||"hard")+ ")"):p.name;
     li.append(sw,nm);
+    const pt=document.createElement("span");pt.className="pts";pt.textContent=(p.pts||0)+" pts";li.appendChild(pt);
     const tg=document.createElement("span");tg.className="tags";tg.textContent=(p.tags||0)+" tags";li.appendChild(tg);
     if(p.frozen){const b=document.createElement("span");b.className="badge";b.textContent="frozen";li.appendChild(b);}
     if(p.it){const b=document.createElement("span");b.className="badge it";b.textContent="IT";li.appendChild(b);}

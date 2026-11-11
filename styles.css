@@ -81,6 +81,7 @@
   .badge.you { background: var(--ink); color: var(--paper); }
   .badge.lead { background: #fff; }
   .tags { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--muted); }
+  .pts { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: var(--ink); font-weight: 700; }
   .empty { color: var(--muted); font-style: italic; }
   .kick { padding: 3px 7px; font-size: 10px; }
 

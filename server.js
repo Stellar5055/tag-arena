@@ -15,7 +15,7 @@ const ARENAS = {
 };
 const DEFAULT_SETTINGS = {
   maxPlayers: 6,
-  tagsToWin: 10,
+  pointsToWin: 1500,
   cooldownMs: 1000,
   speed: 260,
   arena: "classic",
@@ -40,6 +40,11 @@ const CLASSIC_DURATION_MS = 180000;
 const IDLE_AFTER_MS = 15000;
 const IDLE_KICK_MS = 120000;
 const LOBBY_TTL_MS = 3 * 60 * 60 * 1000;
+// Points scoring: runners gain, IT bleeds, frozen/spectating accrue nothing.
+// Fixed symmetric rates keep ranking exactly equal to least-IT-time while
+// reading as a live score. No lump tag bonus in v1 (keeps it provably fair).
+const POINTS_GAIN_PER_SEC = 10;
+const POINTS_LOSE_PER_SEC = 10;
 // Block any human name starting with "bot" so players can't impersonate bots.
 // Intentionally broad (Bot_1, BotX, bot-2 all match); "Bottle"-style false
 // positives are acceptable vs impersonation confusion.
@@ -87,8 +92,15 @@ function cleanLook(look, takenColors) {
 function cleanSettings(s) {
   const v = Object.assign({}, DEFAULT_SETTINGS, s || {});
   v.maxPlayers = Math.max(2, Math.min(8, parseInt(v.maxPlayers, 10) || 6));
-  const ttw = parseInt(v.tagsToWin, 10);
-  v.tagsToWin = ttw === 0 ? 0 : [3, 5, 10, 20].includes(ttw) ? ttw : 10;
+  if ((s || {}).pointsToWin === undefined && v.tagsToWin !== undefined) {
+    // Legacy client compat (one release): rough tags->points conversion.
+    const legacy = parseInt(v.tagsToWin, 10);
+    v.pointsToWin = legacy === 0 ? 0 : [3, 5, 10, 20].includes(legacy) ? legacy * 150 : 1500;
+  } else {
+    const ptw = parseInt(v.pointsToWin, 10);
+    v.pointsToWin = ptw === 0 ? 0 : [750, 1500, 3000].includes(ptw) ? ptw : 1500;
+  }
+  delete v.tagsToWin;
   v.cooldownMs = [500, 1000, 2000].includes(parseInt(v.cooldownMs, 10)) ? parseInt(v.cooldownMs, 10) : 1000;
   v.speed = [200, 260, 320].includes(parseInt(v.speed, 10)) ? parseInt(v.speed, 10) : 260;
   if (!ARENAS[v.arena]) v.arena = "classic";
@@ -132,6 +144,7 @@ function publicPlayers(lobby) {
       kind: p.bot ? p.kind || "chaser" : undefined,
       difficulty: p.bot ? p.difficulty || "hard" : undefined,
       tags: p.tags || 0,
+      pts: Math.round(p.pts || 0),
       dashing: now < (p.dashUntil || 0),
       dashCharges: dashOff ? 0 : p.dashCharges ?? DASH_MAX_CHARGES,
       dashMax: DASH_MAX_CHARGES,
@@ -170,7 +183,7 @@ function broadcastState(lobby) {
     code: lobby.code,
     leaderId: lobby.leaderId,
     state: lobby.state,
-    settings: { tagsToWin: lobby.settings.tagsToWin, arena: lobby.settings.arena, gameMode: lobby.settings.gameMode, dashCdMs: lobby.settings.dashCdMs },
+    settings: { pointsToWin: lobby.settings.pointsToWin, arena: lobby.settings.arena, gameMode: lobby.settings.gameMode, dashCdMs: lobby.settings.dashCdMs },
     arena: arenaSize(lobby),
     players: publicPlayers(lobby),
     winnerId: lobby.winnerId || null,
@@ -276,27 +289,37 @@ function classicTagTarget(itPlayer, players, now, tagCooldownUntil) {
   return null;
 }
 
-// Freeze mode: "it" wins by freezing every non-spectator runner, or by
-// reaching tagsToWin. Runners win when the timer expires.
-function freezeOutcome(players, itPlayer, tagsToWin, timerExpired) {
+// Freeze mode: "it" wins by freezing every non-spectator runner.
+// Runners win when the timer expires. Tags are a stat only.
+function freezeOutcome(players, itPlayer, timerExpired) {
   const active = players.filter((p) => !p.spectate && p !== itPlayer);
   if (active.length > 0 && active.every((p) => p.frozen)) return "it";
-  if (tagsToWin > 0 && itPlayer && (itPlayer.tags || 0) >= tagsToWin) return "it";
   if (timerExpired) return "runners";
   return null;
 }
 
-// Classic mode timer: most tags wins when the clock runs out.
-// Returns { winnerId, winTeam } with winTeam "it" for a solo winner or
-// "draw" for a tie. Spectators are excluded. Returns null when nobody
-// played (empty active list).
-function classicTimeWinner(players) {
+// Points scoring (classic mode). Runners gain, IT bleeds, frozen and
+// spectating players accrue nothing. Pure (exported for tests).
+function accruePoints(p, dt) {
+  if (!p || p.spectate) return;
+  if (p.it) p.pts = (p.pts || 0) - POINTS_LOSE_PER_SEC * dt;
+  else if (!p.frozen) p.pts = (p.pts || 0) + POINTS_GAIN_PER_SEC * dt;
+}
+
+// Classic mode timer: most points wins when the clock runs out.
+// Tiebreak is tags (rewards conversion), then a draw. Spectators are
+// excluded. Returns null when nobody played (empty active list).
+function classicPointsWinner(players) {
   const active = players.filter((p) => !p.spectate);
   if (active.length === 0) return null;
   let best = -Infinity;
-  for (const p of active) best = Math.max(best, p.tags || 0);
-  const leaders = active.filter((p) => (p.tags || 0) === best);
+  for (const p of active) best = Math.max(best, p.pts || 0);
+  const leaders = active.filter((p) => (p.pts || 0) === best);
   if (leaders.length === 1) return { winnerId: leaders[0].id, winTeam: "it" };
+  let bestTags = -Infinity;
+  for (const p of leaders) bestTags = Math.max(bestTags, p.tags || 0);
+  const tagLeaders = leaders.filter((p) => (p.tags || 0) === bestTags);
+  if (tagLeaders.length === 1) return { winnerId: tagLeaders[0].id, winTeam: "it" };
   return { winnerId: null, winTeam: "draw" };
 }
 
@@ -326,6 +349,7 @@ function makeBotPlayer(lobby, botsCount, difficulty) {
     kind,
     difficulty: diff,
     tags: 0,
+    pts: 0,
     wobble: Math.random() * 10,
     thinkAt: 0,
     tx: pos.x,
@@ -656,6 +680,7 @@ function resetForStart(lobby) {
     p.lastX = pos.x;
     p.lastY = pos.y;
     p.tags = 0;
+    p.pts = 0;
     p.it = false;
     p.keys = {};
     p.moveVec = null;
@@ -774,6 +799,10 @@ const tickTimer = setInterval(() => {
 
     estimateVelocities(lobby, dt);
 
+    // Points scoring: runners gain, IT bleeds. Frozen/spectating accrue
+    // nothing. Applies to bots too (same rule, same economy).
+    for (const p of lobby.players.values()) accruePoints(p, dt);
+
     const all = [...lobby.players.values()];
     for (const p of all) {
       if (!p.bot || p.spectate || p.frozen) continue;
@@ -823,9 +852,6 @@ const tickTimer = setInterval(() => {
       if (allFrozen && all.some((p) => !p.spectate && !p.it)) {
         lobby.winTeam = "it";
         lobby.winnerId = itPlayer ? itPlayer.id : null;
-      } else if (lobby.settings.tagsToWin > 0 && itPlayer && (itPlayer.tags || 0) >= lobby.settings.tagsToWin) {
-        lobby.winTeam = "it";
-        lobby.winnerId = itPlayer.id;
       } else if (lobby.endsAt && now >= lobby.endsAt) {
         lobby.winTeam = "runners";
         lobby.winnerId = "runners";
@@ -857,16 +883,24 @@ const tickTimer = setInterval(() => {
             q.chaseUntil = 0;
           }
           lobby.tagCooldownUntil = now + lobby.settings.cooldownMs;
-          if (lobby.settings.tagsToWin > 0 && itPlayer.tags >= lobby.settings.tagsToWin) {
-            lobby.winnerId = itPlayer.id;
-            lobby.winTeam = "it";
-          }
           break;
+        }
+      }
+      // Points race: first active player to the target wins immediately.
+      if (!lobby.winnerId && !lobby.winTeam && lobby.settings.pointsToWin > 0) {
+        let best = null;
+        for (const q of all) {
+          if (q.spectate) continue;
+          if (!best || (q.pts || 0) > (best.pts || 0)) best = q;
+        }
+        if (best && (best.pts || 0) >= lobby.settings.pointsToWin) {
+          lobby.winnerId = best.id;
+          lobby.winTeam = "it";
         }
       }
       }
       if (!lobby.winnerId && !lobby.winTeam && lobby.endsAt && now >= lobby.endsAt) {
-        const result = classicTimeWinner(all);
+        const result = classicPointsWinner(all);
         if (result) {
           lobby.winnerId = result.winnerId;
           lobby.winTeam = result.winTeam;
@@ -1090,6 +1124,7 @@ wss.on("connection", (socket) => {
         it: false,
         bot: false,
         tags: 0,
+    pts: 0,
         wobble: Math.random() * 10,
         dashUntil: 0,
         dashCharges: DASH_MAX_CHARGES,
@@ -1167,6 +1202,7 @@ wss.on("connection", (socket) => {
           it: false,
           bot: false,
           tags: 0,
+    pts: 0,
           wobble: Math.random() * 10,
           dashUntil: 0,
           dashCharges: DASH_MAX_CHARGES,
@@ -1238,6 +1274,7 @@ wss.on("connection", (socket) => {
           it: false,
           bot: false,
           tags: 0,
+    pts: 0,
           wobble: Math.random() * 10,
           dashUntil: 0,
           dashCharges: DASH_MAX_CHARGES,
@@ -1343,6 +1380,7 @@ wss.on("connection", (socket) => {
       lobby.endsAt = 0;
       for (const p of lobby.players.values()) {
         p.tags = 0;
+        p.pts = 0;
         p.it = false;
         p.keys = {};
         p.moveVec = null;
@@ -1524,10 +1562,13 @@ module.exports = {
   removePlayer,
   isTagTouch,
   classicTagTarget,
-  classicTimeWinner,
+  classicPointsWinner,
+  accruePoints,
   freezeOutcome,
   RADIUS,
   DEFAULT_SETTINGS,
+  POINTS_GAIN_PER_SEC,
+  POINTS_LOSE_PER_SEC,
   CLASSIC_DURATION_MS,
   FREEZE_DURATION_MS,
   IDLE_AFTER_MS,

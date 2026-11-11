@@ -18,10 +18,13 @@ const {
   thinkBot,
   isTagTouch,
   classicTagTarget,
-  classicTimeWinner,
+  classicPointsWinner,
+  accruePoints,
   freezeOutcome,
   RADIUS,
   CLASSIC_DURATION_MS,
+  POINTS_GAIN_PER_SEC,
+  POINTS_LOSE_PER_SEC,
   HUMAN_FLEE_BOOST_MULT,
   IDLE_KICK_MS,
 } = require("../server.js");
@@ -29,20 +32,25 @@ const {
 test("cleanSettings clamps to allowed values", () => {
   const d = cleanSettings({});
   assert.equal(d.maxPlayers, 6);
-  assert.equal(d.tagsToWin, 10);
+  assert.equal(d.pointsToWin, 1500);
   assert.equal(d.speed, 260);
 
-  const bad = cleanSettings({ maxPlayers: 99, tagsToWin: 7, speed: 999, arena: "nope", gameMode: "nope", dashCdMs: 123 });
+  const bad = cleanSettings({ maxPlayers: 99, pointsToWin: 7, speed: 999, arena: "nope", gameMode: "nope", dashCdMs: 123 });
   assert.equal(bad.maxPlayers, 8);
-  assert.equal(bad.tagsToWin, 10);
+  assert.equal(bad.pointsToWin, 1500);
   assert.equal(bad.speed, 260);
   assert.equal(bad.arena, "classic");
   assert.equal(bad.gameMode, "classic");
   assert.equal(bad.dashCdMs, 3000);
 
-  const endless = cleanSettings({ tagsToWin: 0, dashCdMs: 0 });
-  assert.equal(endless.tagsToWin, 0);
-  assert.equal(endless.dashCdMs, 0);
+  const timedOnly = cleanSettings({ pointsToWin: 0, dashCdMs: 0 });
+  assert.equal(timedOnly.pointsToWin, 0);
+  assert.equal(timedOnly.dashCdMs, 0);
+
+  // Legacy clients still send tagsToWin: convert roughly, timed-only stays timed-only.
+  assert.equal(cleanSettings({ tagsToWin: 10 }).pointsToWin, 1500);
+  assert.equal(cleanSettings({ tagsToWin: 0 }).pointsToWin, 0);
+  assert.equal(cleanSettings({ tagsToWin: 3 }).pointsToWin, 450);
 });
 
 test("cleanLook rejects bad values and avoids taken colors", () => {
@@ -101,35 +109,67 @@ test("classic tag transfer triggers on touch, respects cooldown and grace", () =
 });
 
 test("freeze outcome: all-frozen and timer paths", () => {
-  const it = { id: "it", tags: 1 };
+  const it = { id: "it", tags: 1, pts: 50 };
   const a = { id: "a", frozen: true, spectate: false };
   const b = { id: "b", frozen: true, spectate: false };
-  assert.equal(freezeOutcome([it, a, b], it, 10, false), "it");
+  assert.equal(freezeOutcome([it, a, b], it, false), "it");
 
   const c = { id: "c", frozen: false, spectate: false };
-  assert.equal(freezeOutcome([it, a, c], it, 10, false), null);
-  assert.equal(freezeOutcome([it, a, c], it, 10, true), "runners");
-
-  const scorer = { id: "it", tags: 10 };
-  assert.equal(freezeOutcome([scorer, c], scorer, 10, false), "it");
+  assert.equal(freezeOutcome([it, a, c], it, false), null);
+  assert.equal(freezeOutcome([it, a, c], it, true), "runners");
 });
 
-test("classic timer: most tags wins, ties draw, spectators excluded", () => {
+test("classic points: most points wins, tags break ties, spectators excluded", () => {
   assert.equal(CLASSIC_DURATION_MS, 180000);
+  assert.equal(POINTS_GAIN_PER_SEC, 10);
+  assert.equal(POINTS_LOSE_PER_SEC, 10);
 
-  const a = { id: "a", tags: 7, spectate: false };
-  const b = { id: "b", tags: 4, spectate: false };
-  assert.deepEqual(classicTimeWinner([a, b]), { winnerId: "a", winTeam: "it" });
+  const a = { id: "a", pts: 700, tags: 2, spectate: false };
+  const b = { id: "b", pts: 400, tags: 4, spectate: false };
+  assert.deepEqual(classicPointsWinner([a, b]), { winnerId: "a", winTeam: "it" });
 
-  const c = { id: "c", tags: 7, spectate: false };
-  assert.deepEqual(classicTimeWinner([a, c]), { winnerId: null, winTeam: "draw" });
+  // Exact points tie falls back to tags.
+  const c = { id: "c", pts: 700, tags: 7, spectate: false };
+  assert.deepEqual(classicPointsWinner([a, c]), { winnerId: "c", winTeam: "it" });
 
-  // Spectators never win, even with more tags.
-  const spec = { id: "spec", tags: 99, spectate: true };
-  assert.deepEqual(classicTimeWinner([a, b, spec]), { winnerId: "a", winTeam: "it" });
+  // Full tie (points and tags) is a draw.
+  const d = { id: "d", pts: 700, tags: 7, spectate: false };
+  assert.deepEqual(classicPointsWinner([c, d]), { winnerId: null, winTeam: "draw" });
 
-  assert.equal(classicTimeWinner([]), null);
-  assert.equal(classicTimeWinner([spec]), null);
+  // Spectators never win, even with more points.
+  const spec = { id: "spec", pts: 9999, tags: 99, spectate: true };
+  assert.deepEqual(classicPointsWinner([a, b, spec]), { winnerId: "a", winTeam: "it" });
+
+  assert.equal(classicPointsWinner([]), null);
+  assert.equal(classicPointsWinner([spec]), null);
+});
+
+test("accruePoints: runners gain, IT bleeds, frozen/spectating accrue nothing", () => {
+  const dt = 1;
+  const runner = { id: "r", it: false, frozen: false, spectate: false, pts: 100 };
+  accruePoints(runner, dt);
+  assert.equal(runner.pts, 100 + POINTS_GAIN_PER_SEC * dt);
+
+  const it = { id: "i", it: true, frozen: false, spectate: false, pts: 100 };
+  accruePoints(it, dt);
+  assert.equal(it.pts, 100 - POINTS_LOSE_PER_SEC * dt);
+
+  // Frozen runner accrues nothing (no reward for being caught in freeze).
+  const frozen = { id: "f", it: false, frozen: true, spectate: false, pts: 100 };
+  accruePoints(frozen, dt);
+  assert.equal(frozen.pts, 100);
+
+  // Spectators accrue nothing.
+  const spec = { id: "s", it: false, frozen: false, spectate: true, pts: 100 };
+  accruePoints(spec, dt);
+  assert.equal(spec.pts, 100);
+
+  // Symmetric rates: a full IT/runner swap nets zero (fair exchange).
+  const x = { id: "x", it: false, frozen: false, spectate: false, pts: 0 };
+  accruePoints(x, 10);
+  x.it = true;
+  accruePoints(x, 10);
+  assert.equal(x.pts, 0);
 });
 
 test("dashMsLeft counts down the next charge while partially spent", () => {  const now = Date.now();
@@ -281,18 +321,20 @@ test("freezeOutcome matches tick rule: mixed human+bot needs everyone frozen", (
   const it = { id: "it", tags: 0 };
   const frozenHuman = { id: "h", frozen: true, spectate: false };
   const freeBot = { id: "b", frozen: false, spectate: false, bot: true };
-  assert.equal(freezeOutcome([it, frozenHuman, freeBot], it, 10, false), null);
-  assert.equal(freezeOutcome([it, frozenHuman, { ...freeBot, frozen: true }], it, 10, false), "it");
+  assert.equal(freezeOutcome([it, frozenHuman, freeBot], it, false), null);
+  assert.equal(freezeOutcome([it, frozenHuman, { ...freeBot, frozen: true }], it, false), "it");
 });
 
 test("resetForStart auto-joins spectators (Play again parity with End)", () => {
   const lobby = { settings: cleanSettings({ maxPlayers: 8 }), players: new Map(), tagCooldownUntil: 0, endsAt: 0, winnerId: "x", winTeam: "it" };
-  lobby.players.set("a", { id: "a", spectate: false, x: 0, y: 0, tags: 5, it: true, bot: false, ready: true });
-  lobby.players.set("s", { id: "s", spectate: true, x: -100, y: -100, tags: 9, it: false, bot: false, ready: false });
+  lobby.players.set("a", { id: "a", spectate: false, x: 0, y: 0, tags: 5, pts: 900, it: true, bot: false, ready: true });
+  lobby.players.set("s", { id: "s", spectate: true, x: -100, y: -100, tags: 9, pts: 1200, it: false, bot: false, ready: false });
   resetForStart(lobby);
   const s = lobby.players.get("s");
   assert.equal(s.spectate, false);
   assert.equal(s.tags, 0);
+  assert.equal(s.pts, 0);
+  assert.equal(lobby.players.get("a").pts, 0);
   assert.ok(s.x >= 0 && s.y >= 0);
 });
 
