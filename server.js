@@ -45,7 +45,7 @@ const LOBBY_TTL_MS = 3 * 60 * 60 * 1000;
 // reading as a live score. No lump tag bonus in v1 (keeps it provably fair).
 const POINTS_GAIN_PER_SEC = 10;
 const POINTS_LOSE_PER_SEC = 10;
-// Block any human name starting with "bot" so players can't impersonate bots.
+// Block any human name starting with "bot" so real players can't impersonate bots.
 // Intentionally broad (Bot_1, BotX, bot-2 all match); "Bottle"-style false
 // positives are acceptable vs impersonation confusion.
 const BOT_NAME_RE = /^bot/i;
@@ -201,7 +201,7 @@ const BOT_KINDS = {
 };
 const BOT_ORDER = ["chaser", "runner", "trickster"];
 
-// easy < medium < hard (hard is the current behavior)
+// easy < medium < hard
 // react = kind.reactMs + diff.reactAdd ; turn = how fast bots steer toward a new heading
 const BOT_DIFFS = {
   easy: { chase: 0.7, flee: 0.7, reactAdd: 240, predictMult: 0, wanderMult: 2.2, boostMult: 1.0, frozenMs: 650, juke: false, dashMult: 2.2, dashCdMs: 5200, dashChaseMin: 1e9, dashChaseMax: -1, dashFleeRange: 110, turnLerp: 0.12, mistake: 0.15 },
@@ -278,7 +278,7 @@ function isTagTouch(a, b) {
 
 // Classic mode: returns the tagged player id, or null when no tag applies.
 // Mirrors the loop guards: cooldown elapsed, both eligible, target not in
-// post-dash grace.
+// post dash grace
 function classicTagTarget(itPlayer, players, now, tagCooldownUntil) {
   if (!itPlayer || itPlayer.spectate || itPlayer.frozen) return null;
   if (now < tagCooldownUntil) return null;
