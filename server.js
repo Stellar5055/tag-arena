@@ -927,6 +927,8 @@ if (tickTimer.unref) tickTimer.unref();
 const STATIC_FILES = {
   "/styles.css": { file: "styles.css", type: "text/css; charset=utf-8" },
   "/client.js": { file: "client.js", type: "text/javascript; charset=utf-8" },
+  "/favicon.png": { file: "favicon.png", type: "image/png" },
+  "/favicon.ico": { file: "favicon.ico", type: "image/x-icon" },
 };
 
 const server = http.createServer((req, res) => {
