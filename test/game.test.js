@@ -181,6 +181,13 @@ test("accruePoints: runners gain, IT bleeds, frozen/spectating accrue nothing", 
   x.it = true;
   accruePoints(x, 10);
   assert.equal(x.pts, 0);
+
+  // Floor: IT bleeding stops at zero, never goes negative.
+  const broke = { id: "b", it: true, frozen: false, spectate: false, pts: 5 };
+  accruePoints(broke, 10);
+  assert.equal(broke.pts, 0);
+  accruePoints(broke, 10);
+  assert.equal(broke.pts, 0);
 });
 
 test("dashMsLeft counts down the next charge while partially spent", () => {  const now = Date.now();

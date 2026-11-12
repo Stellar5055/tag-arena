@@ -303,7 +303,8 @@ function freezeOutcome(players, itPlayer, timerExpired) {
 // spectating players accrue nothing. Pure (exported for tests).
 function accruePoints(p, dt) {
   if (!p || p.spectate || p.goneAt) return;
-  if (p.it) p.pts = (p.pts || 0) - POINTS_LOSE_PER_SEC * dt;
+  // Floored at zero: IT stops bleeding once broke, runners keep gaining.
+  if (p.it) p.pts = Math.max(0, (p.pts || 0) - POINTS_LOSE_PER_SEC * dt);
   else if (!p.frozen) p.pts = (p.pts || 0) + POINTS_GAIN_PER_SEC * dt;
 }
 
