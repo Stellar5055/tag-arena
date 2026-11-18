@@ -73,7 +73,7 @@ function connect() {
   socket = new WebSocket(wsUrl());
   socket.addEventListener("open", ()=> {
     setConn(true,"connected");
-    // Auto-rejoin after a drop / Render wake: re-announce the same seat.
+    // Auto-rejoin after a drop / server wake: re-announce the same seat.
     try {
       const lastCode = sessionStorage.getItem("tag-lobby");
       if (lastCode && !lobby && !game) {

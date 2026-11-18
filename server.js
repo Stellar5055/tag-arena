@@ -983,7 +983,7 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server, maxPayload: 8 * 1024 });
 
-// Heartbeat: Render/NATs silently drop idle sockets. Terminate dead peers
+// Heartbeat: NATs silently drop idle sockets. Terminate dead peers
 // so `sockets` maps and broadcasts don't leak half-open connections.
 function heartbeat() {
   for (const ws of wss.clients) {
@@ -1066,7 +1066,7 @@ function seatTaken(lobby, playerId) {
   return !!ws && ws.readyState === WebSocket.OPEN;
 }
 
-// Disconnect grace: a dropped socket (refresh, sleep, Render wake) keeps
+// Disconnect grace: a dropped socket (refresh, sleep, server wake) keeps
 // its seat for RECONNECT_GRACE_MS so a fast reload rejoins the same seat
 // instead of becoming a spectator. Explicit Leave kicks immediately.
 const RECONNECT_GRACE_MS = 45000;
